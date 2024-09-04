@@ -10,6 +10,9 @@
 #include "options.h"
 #include "p4fmt.h"
 
+#include "lib/sourceCodeBuilder.h"
+SCB_VARIABLE_DECLS
+
 using namespace P4;
 
 namespace P4::P4Fmt {

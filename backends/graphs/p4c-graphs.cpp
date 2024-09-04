@@ -124,6 +124,9 @@ using GraphsContext = P4CContextWithOptions<Options>;
 
 using namespace P4;
 
+#include "lib/sourceCodeBuilder.h"
+SCB_VARIABLE_DECLS
+
 int main(int argc, char *const argv[]) {
     setup_gc_logging();
     setup_signals();

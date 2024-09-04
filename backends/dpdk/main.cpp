@@ -62,6 +62,9 @@ void generateTDIBfrtJson(bool isTDI, const IR::P4Program *program, DPDK::DpdkOpt
     p4rt->serializeBFRuntimeSchema(out);
 }
 
+#include "lib/sourceCodeBuilder.h"
+SCB_VARIABLE_DECLS
+
 int main(int argc, char *const argv[]) {
     setup_gc_logging();
 

@@ -29,6 +29,9 @@ and limitations under the License.
 #include "options.h"
 #include "version.h"
 
+#include "lib/sourceCodeBuilder.h"
+SCB_VARIABLE_DECLS
+
 using namespace P4;
 
 int main(int argc, char *const argv[]) {

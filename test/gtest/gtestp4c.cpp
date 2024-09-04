@@ -18,6 +18,9 @@ limitations under the License.
 
 #include "helpers.h"
 
+#include "lib/sourceCodeBuilder.h"
+SCB_VARIABLE_DECLS
+
 using namespace P4;
 
 int main(int argc, char **argv) {

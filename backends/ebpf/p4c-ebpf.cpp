@@ -36,6 +36,8 @@ limitations under the License.
 #include "lib/nullstream.h"
 #include "midend.h"
 
+SCB_VARIABLE_DECLS
+
 using namespace P4;
 
 void compile(EbpfOptions &options) {

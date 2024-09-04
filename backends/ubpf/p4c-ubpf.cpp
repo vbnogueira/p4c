@@ -37,6 +37,9 @@ limitations under the License.
 #include "ubpfBackend.h"
 #include "ubpfModel.h"
 
+#include "lib/sourceCodeBuilder.h"
+SCB_VARIABLE_DECLS
+
 using namespace P4;
 
 void compile(EbpfOptions &options) {

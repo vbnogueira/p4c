@@ -37,6 +37,8 @@ limitations under the License.
 #include "lib/nullstream.h"
 #include "midend.h"
 
+SCB_VARIABLE_DECLS
+
 P4TestOptions::P4TestOptions() {
     registerOption(
         "--listMidendPasses", nullptr,
