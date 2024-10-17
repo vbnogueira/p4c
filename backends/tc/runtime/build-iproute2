@@ -1,0 +1,13 @@
+#!/bin/bash
+
+RUNTIME_DIR=$1
+
+apt update
+apt install -y gawk flex bison libelf-dev libmnl-dev pkg-config xtables-addons-source
+cd $RUNTIME_DIR/libbpf/src
+mkdir build root
+BUILD_STATIC_ONLY=y OBJDIR=build DESTDIR=root make install
+
+cd $RUNTIME_DIR/iproute2-p4tc-pub
+./configure --libbpf_dir $RUNTIME_DIR/libbpf/src/root/
+make -j`nproc`
