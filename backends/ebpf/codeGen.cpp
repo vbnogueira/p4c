@@ -74,7 +74,7 @@ static cstring getMask(P4::TypeMap *typeMap, const IR::Node *node) {
 
 bool CodeGenInspector::preorder(const IR::Operation_Binary *b) {
     if (!b->is<IR::BOr>() && !b->is<IR::BAnd>() && !b->is<IR::BXor>() && !b->is<IR::Equ>() &&
-        !b->is<IR::Neq>())
+        !b->is<IR::Neq>() && (builder->target->name != "P4TC"))
         widthCheck(b);
     cstring mask = getMask(typeMap, b);
     int prec = expressionPrecedence;
@@ -185,21 +185,21 @@ bool CodeGenInspector::preorder(const IR::ArrayIndex *a) {
     return false;
 }
 
-bool CodeGenInspector::preorder(const IR::Cast *c) {
-    widthCheck(c);
-    int prec = expressionPrecedence;
-    bool useParens = prec > c->getPrecedence();
-    if (useParens) builder->append("(");
+bool CodeGenInspector::preorder(const IR::Cast *c)
+{
+ int prec = expressionPrecedence;
+ bool useParens = prec > c->getPrecedence();
+ if (useParens) builder->append("(");
 std::cout << "CGI::preorder(IR::Cast), " << (void *)c << ": " << c->toString() << ", destType " << c->destType->toString() << std::endl;
-    builder->append("(");
-    auto et = EBPFTypeFactory::instance->create(c->destType);
-    et->emit(builder);
-    builder->append(")");
-    expressionPrecedence = c->getPrecedence();
-    visit(c->expr);
-    if (useParens) builder->append(")");
-    expressionPrecedence = prec;
-    return false;
+ builder->append("(");
+ auto et = EBPFTypeFactory::instance->create(c->destType);
+ et->emit(builder);
+ builder->append(")");
+ expressionPrecedence = c->getPrecedence();
+ visit(c->expr);
+ expressionPrecedence = prec;
+ if (useParens) builder->append(")");
+ return(false);
 }
 
 bool CodeGenInspector::preorder(const IR::Member *expression) {
@@ -464,7 +464,6 @@ bool CodeGenInspector::preorder(const IR::MethodCallStatement *s) {
 }
 
 void CodeGenInspector::widthCheck(const IR::Node *node) const {
-#if 0
     // This is a temporary solution.
     // Rather than generate incorrect results, we reject programs that
     // do not perform arithmetic on machine-supported widths.
@@ -482,9 +481,17 @@ void CodeGenInspector::widthCheck(const IR::Node *node) const {
     }
     ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET, "%1%: Computations on %2% bits not supported",
                 node, tb->size);
-#else
- (void)node;
-#endif
+}
+
+bool CodeGenInspector::scalar_type(const IR::Node *node) const
+{
+ CHECK_NULL(node);
+ auto type = typeMap->getType(node, true);
+ auto tb = type->to<IR::Type_Bits>();
+ return( !tb ||
+	 ( !(tb->size & 7) &&
+	   EBPFScalarType::generatesScalar(tb->size) ) ||
+	 ((tb->size <= 64) && !tb->isSigned) );
 }
 
 void CodeGenInspector::emitAndConvertByteOrder(const IR::Expression *expr, cstring byte_order) {

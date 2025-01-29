@@ -127,6 +127,7 @@ class CodeGenInspector : public Inspector {
     bool preorder(const IR::IfStatement *s) override;
 
     void widthCheck(const IR::Node *node) const;
+    bool scalar_type(const IR::Node *node) const;
     void emitAndConvertByteOrder(const IR::Expression *expr, cstring byte_order);
     void emitTCBinaryOperation(const IR::Operation_Binary *b, bool isScalar);
     void emitTCAssignmentEndianessConversion(const IR::Type *ltype, const IR::Expression *lexpr,

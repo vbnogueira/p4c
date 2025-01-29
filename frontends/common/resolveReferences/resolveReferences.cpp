@@ -244,7 +244,7 @@ const IR::IDeclaration *ResolutionContext::resolveUnique(const IR::ID &name,
     }
 
     if (decls.empty()) {
-        ::P4::error(ErrorType::ERR_NOT_FOUND, "%1%: declaration not found", name);
+        ::P4::error(ErrorType::ERR_NOT_FOUND, "%1%: declaration not found [A]", name);
         return nullptr;
     }
     if (decls.size() == 1) {
@@ -265,7 +265,7 @@ const IR::IDeclaration *ResolutionContext::getDeclaration(const IR::Path *path,
         // looking up a matchType in a key, so need to do a special lookup
         auto decls = lookupMatchKind(path->name);
         if (decls.empty()) {
-            ::P4::error(ErrorType::ERR_NOT_FOUND, "%1%: declaration not found", path->name);
+            ::P4::error(ErrorType::ERR_NOT_FOUND, "%1%: declaration not found [B]", path->name);
         } else if (decls.size() != 1) {
             ::P4::error(ErrorType::ERR_DUPLICATE, "%1%: multiple matching declarations",
                         path->name);
@@ -411,7 +411,7 @@ bool ResolveReferences::preorder(const IR::KeyElement *ke) {
     visit(ke->expression, "expression");
     auto decls = lookupMatchKind(ke->matchType->path->name);
     if (decls.empty()) {
-        ::P4::error(ErrorType::ERR_NOT_FOUND, "%1%: declaration not found",
+        ::P4::error(ErrorType::ERR_NOT_FOUND, "%1%: declaration not found [C]",
                     ke->matchType->path->name);
         refMap->usedName(ke->matchType->path->name.name);
     } else if (decls.size() != 1) {

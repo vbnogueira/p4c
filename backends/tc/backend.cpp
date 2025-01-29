@@ -1,3 +1,7 @@
+#include <cassert>
+#include <typeinfo>
+#include <type_traits>
+
 /*
 Copyright (C) 2023 Intel Corporation
 
@@ -86,7 +90,7 @@ const IR::Node *FIXUP_CASTS::postorder(IR::Statement *stmt)
  std::cout << '\n' << "cast fixup: postorder: " << (void *)stmt << '\n' << stmt->toString() << std::endl;
  std::cout << "Declarations:";
  for (t=tl;t;t=t->link) std::cout << " " << t->decl->toString();
- std::cout << std::endl;
+ std::cout << '.' << std::endl;
  b = new IR::BlockStatement();
  for (t=tl;t;t=t->link) b->append(t->decl);
  for (s=sl;s;s=s->link) b->append(s->stmt);
@@ -103,6 +107,20 @@ static void save_temp(TC::CONTAINER *c, IR::Declaration *d)
  dl->link = c->temps;
  c->temps = dl;
 }
+
+/*
+static void save_call(TC::CONTAINER *c, const IR::MethodCallExpression *e)
+{
+ STMTLIST *sl;
+ IR::MethodCallStatement *s;
+
+ sl = new STMTLIST;
+ s = new IR::MethodCallStatement(e);
+ sl->stmt = s;
+ sl->link = c->stmts;
+ c->stmts = sl;
+}
+*/
 
 static void save_assign(TC::CONTAINER *c, IR::Declaration *var, const IR::Expression *e)
 {
@@ -161,14 +179,220 @@ const IR::Node *FIXUP_CASTS::postorder(IR::Cast *e)
  std::cout << "Dst declaration: " << dd->toString() << std::endl;
  save_temp(contain,sd);
  save_temp(contain,dd);
- save_assign(contain,dd,new IR::MethodCallExpression(new IR::PathExpression(":?:"),{new IR::PathExpression(sd->name)}));
-// save_assign(contain,dd,new IR::PathExpression(sd->name));
- save_assign(contain,sd,e->expr);
  auto px = new IR::PathExpression(dd->getName());
+// save_call(contain,new IR::MethodCallExpression(new IR::PathExpression(":?:"),{px, new IR::PathExpression(sd->name)}));
+ if (aw > cw)
+  { save_assign(contain,dd,new IR::Slice(new IR::PathExpression(sd->getName()),cw-1,0));
+  }
+ else if (aw < cw)
+  { IR::Constant *zero = new IR::Constant(0);
+    IR::Constant *wzero = new IR::Constant(zero->srcInfo,IR::Type_Bits::get(zero->srcInfo,cw-aw),0,10);
+    save_assign(contain,dd,new IR::Concat(wzero, new IR::PathExpression(sd->getName())));
+  }
+ else
+  { save_assign(contain,dd,new IR::PathExpression(sd->name));
+  }
+ save_assign(contain,sd,e->expr);
  std::cout << "Cast expression: " << (void *)e << ", " << e->toString() << std::endl;
- std::cout << "Replacement expression: " << (void *)px << ", " << px->toString() << std::endl;
+ std::cout << "Replacement expression: " << (void *)px << ", " << px->toString() << '.' << std::endl;
  return(px);
 // return(e);
+}
+
+void SCAN_WIDTHS::dump() const
+{
+ int i;
+ WIDTH_REC *wr;
+
+ std::cout << "nwr: " << nwr;
+ for (i=0;i<nwr;i++)
+  { wr = wrv + i;
+    std::cout << "\n  [" << i << "]: ";
+    switch (wr->type)
+     { case WR_VALUE:
+	  std::cout << "VALUE: " << wr->value;
+	  break;
+       case WR_CONCAT:
+	  std::cout << "CONCAT: " << wr->concat.lhsw << ' ' << wr->concat.rhsw;
+	  break;
+       default:
+	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
+	  break;
+     }
+  }
+ std::cout << std::endl;
+}
+
+Visitor::profile_t SCAN_WIDTHS::init_apply(const IR::Node *n)
+{
+ std::cout << "SCAN_WIDTHS init_apply" << std::endl;
+ return(this->Inspector::init_apply(n));
+}
+
+void SCAN_WIDTHS::end_apply(const IR::Node *n)
+{
+ Inspector::end_apply(n);
+ std::cout << "SCAN_WIDTHS end_apply" << std::endl;
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Expression *e)
+{
+ const IR::Type *t;
+
+ t = typemap->getType(e,true);
+ if (t->is<IR::Type_Type>()) t = t->to<const IR::Type_Type>()->type;
+ if (t->is<IR::Type_Bits>())
+  { std::cout << "SCAN_WIDTHS preorder(" << e->toString() << "), type " << t << ", width " << t->width_bits() << std::endl;
+    add_width(t->width_bits());
+  }
+ return(true);
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Concat *e)
+{
+ const IR::Type *lt;
+ const IR::Type *rt;
+ const IR::Type *ct;
+
+ lt = typemap->getType(e->left,true);
+ if (lt->is<IR::Type_Type>()) lt = lt->to<const IR::Type_Type>()->type;
+ rt = typemap->getType(e->right,true);
+ if (rt->is<IR::Type_Type>()) rt = rt->to<const IR::Type_Type>()->type;
+ if (lt->is<IR::Type_Bits>() && rt->is<IR::Type_Bits>())
+  { std::cout << "SCAN_WIDTHS preorder(" << e->toString() << "), concat " << lt << '(' << lt->width_bits()
+	<< ") and " << rt << '(' << rt->width_bits() << ')' << std::endl;
+    add_concat(lt->width_bits(),rt->width_bits());
+  }
+ // return(preorder(static_cast<const IR::Expression *>(e))) maybe?
+ ct = typemap->getType(e,true);
+ if (ct->is<IR::Type_Type>()) ct = ct->to<const IR::Type_Type>()->type;
+ if (ct->is<IR::Type_Bits>())
+  { std::cout << "SCAN_WIDTHS preorder(" << e->toString() << "), concat type " << ct << ", width " << ct->width_bits() << std::endl;
+    add_width(ct->width_bits());
+  }
+ return(true);
+}
+
+// There's _got_ to be a C++ standard object that can do this better.
+//  std::set maybe?  "_First_ make it work, _then_ make it better."
+void SCAN_WIDTHS::insert_wr(WIDTH_REC &wr)
+{
+ int l;
+ int m;
+ int h;
+ int i;
+
+ l = -1;
+ h = nwr;
+ while (h-l > 1)
+  { m = (h + l) / 2;
+    if (wrv[m] <= wr) l = m;
+    if (wrv[m] >= wr) h = m;
+  }
+ if (l == h) return;
+ // Ugh.  C++ broke automatic casts from void *.  I have no idea why,
+ //  but it loses a third of the utility of void *....
+ wrv = static_cast<WIDTH_REC *>(std::realloc(wrv,(nwr+1)*sizeof(*wrv)));
+ for (i=nwr;i>h;i--) wrv[i] = wrv[i-1];
+ nwr ++;
+ wrv[h] = wr;
+}
+
+void SCAN_WIDTHS::add_width(int w)
+{
+ WIDTH_REC wr;
+
+ if (w <= 64) return;
+ wr.type = WR_VALUE;
+ wr.value = w;
+ insert_wr(wr);
+}
+
+void SCAN_WIDTHS::add_concat(int lw, int rw)
+{
+ WIDTH_REC wr;
+
+ assert((lw>0)&&(lw<1048576)&&(rw>0)&&(rw<1048576));
+ if (lw+rw <= 64) return;
+ wr.type = WR_CONCAT;
+ wr.concat.lhsw = lw;
+ wr.concat.rhsw = rw;
+ insert_wr(wr);
+}
+
+void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
+{
+ int i;
+
+ bld->appendLine("// These do not belong in the *_parser.h file!");
+ bld->appendLine("// XXX Figure out a better place for them.");
+ for (i=0;i<nwr;i++)
+  { switch (wrv[i].type)
+     { case WR_VALUE:
+	  bld->newline();
+    	  bld->appendFormat("struct internal_bit%d {\n",wrv[i].value);
+	  bld->appendFormat("  u8 bits[%d]\n",(wrv[i].value+7)>>3);
+	  bld->appendLine("};");
+	  break;
+       case WR_CONCAT:
+	  break;
+       default:
+	  abort();
+	  break;
+     }
+  }
+ for (i=0;i<nwr;i++)
+  { switch (wrv[i].type)
+     { case WR_VALUE:
+	  break;
+       case WR_CONCAT:
+	  bld->newline();
+	  assert(wrv[i].concat.lhsw+wrv[i].concat.rhsw > 64);
+	  bld->appendFormat("extern struct internal_bit_%d concat_%d_%d(",
+		wrv[i].concat.lhsw+wrv[i].concat.rhsw, wrv[i].concat.lhsw, wrv[i].concat.rhsw);
+	  if (wrv[i].concat.lhsw > 64) bld->appendFormat("struct internal_bit_%d",wrv[i].concat.lhsw);
+	  else                         bld->appendFormat("u64");
+	  bld->append(",");
+	  if (wrv[i].concat.rhsw > 64) bld->appendFormat("struct internal_bit_%d",wrv[i].concat.rhsw);
+	  else                         bld->appendFormat("u64");
+	  bld->append(");\n");
+	  break;
+       default:
+	  abort();
+	  break;
+     }
+  }
+}
+
+void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
+{
+ int i;
+
+ bld->newline();
+ bld->appendLine("// XXX Figure out a better place for these.");
+ for (i=0;i<nwr;i++)
+  { switch (wrv[i].type)
+     { case WR_VALUE:
+	  break;
+       case WR_CONCAT:
+	  bld->newline();
+	  bld->appendFormat("extern struct internal_bit_%d concat_%d_%d(",
+		wrv[i].concat.lhsw+wrv[i].concat.rhsw, wrv[i].concat.lhsw, wrv[i].concat.rhsw);
+	  if (wrv[i].concat.lhsw > 64) bld->appendFormat("struct internal_bit_%d",wrv[i].concat.lhsw);
+	  else                         bld->appendFormat("u64");
+	  bld->append(" lhs,");
+	  if (wrv[i].concat.rhsw > 64) bld->appendFormat("struct internal_bit_%d",wrv[i].concat.rhsw);
+	  else                         bld->appendFormat("u64");
+	  bld->append(" rhs)\n");
+	  bld->append("{\n");
+	  bld->append(" // XXX implement this!\n");
+	  bld->append("}\n");
+	  break;
+       default:
+	  abort();
+	  break;
+     }
+  }
 }
 
 bool Backend::process() {
@@ -180,21 +404,36 @@ bool Backend::process() {
     auto refMapEBPF = refMap;
     auto typeMapEBPF = typeMap;
     auto hook = options.getDebugHook();
+    SCAN_WIDTHS *sw = new SCAN_WIDTHS(typeMap);
     parseTCAnno = new ParseTCAnnotations();
     tcIR = new ConvertToBackendIR(toplevel, pipeline, refMap, typeMap, options);
     genIJ = new IntrospectionGenerator(pipeline, refMap, typeMap);
     EBPF::EBPFTypeFactory::createFactory(typeMapEBPF, true);
     PassManager backEnd = {};
-    backEnd.addPasses({parseTCAnno, new P4::ClearTypeMap(typeMap),
-                       new P4::TypeChecking(refMap, typeMap, true), new FIXUP_CASTS(refMap,typeMap), tcIR, genIJ});
+    backEnd.addPasses({parseTCAnno,
+ new FIXUP_CASTS(refMap,typeMap), 
+ new P4::ClearTypeMap(typeMap),
+                       new P4::TypeChecking(refMap, typeMap, true),
+ sw, tcIR, genIJ});
+ widths = sw;
     backEnd.addDebugHook(hook, true);
-    toplevel->getProgram()->apply(backEnd);
+ std::cout << "before backend passes, toplevel is " << static_cast<const void *>(toplevel) <<
+	", toplevel->getProgram() is " << static_cast<const void *>(toplevel->getProgram()) << std::endl;
+    auto newpgm = toplevel->getProgram()->apply(backEnd);
+// std::cout << "newpgm type is " << 
+//	", new is " << static_cast<const void *>(newtop) <<
+//		" (program " << static_cast<const void *>(newtop->getProgram()) <<
+//	std::endl;
+    // toplevel->node = newpgm;
+ std::cout << "after backend passes, toplevel is " << static_cast<const void *>(toplevel) <<
+	", toplevel->getProgram() is " << static_cast<const void *>(toplevel->getProgram()) << std::endl;
     if (::P4::errorCount() > 0) return false;
-    if (!ebpfCodeGen(refMapEBPF, typeMapEBPF)) return false;
+ widths->dump();
+    if (!ebpfCodeGen(refMapEBPF, typeMapEBPF, newpgm)) return false;
     return true;
 }
 
-bool Backend::ebpfCodeGen(P4::ReferenceMap *refMapEBPF, P4::TypeMap *typeMapEBPF) {
+bool Backend::ebpfCodeGen(P4::ReferenceMap *refMapEBPF, P4::TypeMap *typeMapEBPF, const IR::P4Program *prog) {
     target = new EBPF::P4TCTarget(options.emitTraceMessages);
     ebpfOption.xdp2tcMode = options.xdp2tcMode;
     ebpfOption.exe_name = options.exe_name;
@@ -214,11 +453,14 @@ bool Backend::ebpfCodeGen(P4::ReferenceMap *refMapEBPF, P4::TypeMap *typeMapEBPF
 
     main->apply(*parsePnaArch);
     auto evaluator = new P4::EvaluatorPass(refMapEBPF, typeMapEBPF);
-    auto program = toplevel->getProgram();
+    auto program = prog;
+//    auto program = toplevel->getProgram(); (void)prog;
 
     PassManager rewriteToEBPF = {
         evaluator,
-        new VisitFunctor([this, evaluator, structure]() { top = evaluator->getToplevelBlock(); }),
+        new VisitFunctor([this, evaluator, structure]() { 
+std::cout << "rewriteToEBPF VisitFunctor running" << std::endl;
+top = evaluator->getToplevelBlock(); }),
     };
 
     auto hook = options.getDebugHook();
@@ -262,6 +504,13 @@ void Backend::serialize() const {
     ebpf_program->emit(&c);
     ebpf_program->emitParser(&p);
     ebpf_program->emitHeader(&h);
+    if (widths) {
+	widths->dump();
+	widths->gen_h(&h);
+	widths->gen_c(&c);
+    } else {
+	std::cout << "No widths\n";
+    }
     if (::P4::errorCount() > 0) {
         return;
     }

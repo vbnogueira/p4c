@@ -73,9 +73,10 @@ int main(int argc, char *const argv[]) {
 
     P4::serializeP4RuntimeIfRequired(program, options);
 
-    const IR::ToplevelBlock *toplevel = nullptr;
+    IR::ToplevelBlock *toplevel = nullptr;
     TC::MidEnd midEnd;
     midEnd.addDebugHook(hook);
+ std::cout << "program before midend is " << static_cast<const void *>(program) << std::endl; 
     try {
         toplevel = midEnd.run(options, program);
         if (::P4::errorCount() > 1 || toplevel == nullptr) {
@@ -94,8 +95,16 @@ int main(int argc, char *const argv[]) {
     if (::P4::errorCount() > 0) {
         return 1;
     }
+ std::cout << "After midend, toplevel is " << static_cast<const void *>(toplevel) <<
+	", program is " << static_cast<const void *>(program) <<
+	", toplevel->getProgram() is " << static_cast<const void *>(toplevel->getProgram()) <<
+	std::endl; 
+ std::cout << "Creating TC::Backend with toplevel " << static_cast<const void *>(toplevel) << std::endl;
     TC::Backend backend(toplevel, &midEnd.refMap, &midEnd.typeMap, options);
+ std::cout << "Calling TC::Backend::process" << std::endl;
     if (!backend.process()) return 1;
+ std::cout << "After TC::Backend::process, &backend is " << static_cast<const void *>(&backend) << std::endl;
+ std::cout << "Writing introspection file" << std::endl;
     std::string progName = backend.tcIR->getPipelineName().string();
     std::string introspecFile = options.outputFolder / (progName + ".json");
     std::ostream *outIntro = openFile(introspecFile, false);
@@ -106,6 +115,7 @@ int main(int argc, char *const argv[]) {
             return 1;
         }
     }
+ std::cout << "Calling TC::Backend::serialize" << std::endl;
     backend.serialize();
     if (::P4::errorCount() > 0) {
         std::remove(introspecFile.c_str());

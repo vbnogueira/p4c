@@ -277,7 +277,7 @@ const IR::ActionListElement *TypeInferenceBase::validateActionInitializer(
     auto pe = method->to<IR::PathExpression>();
     auto decl = getDeclaration(pe->path, !errorOnNullDecls);
     if (errorOnNullDecls && decl == nullptr) {
-        typeError("%1%: Cannot resolve declaration", pe);
+        typeError("%1%: Cannot resolve declaration [B]", pe);
         return nullptr;
     }
 

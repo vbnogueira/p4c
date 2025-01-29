@@ -77,6 +77,76 @@ class FIXUP_CASTS : public Transform {
     explicit FIXUP_CASTS(P4::ReferenceMap *rm, P4::TypeMap *tm) : contain(0), refmap(rm), typemap(tm) { };
   } ;
 
+enum WRTYPE {
+  WR_VALUE = 1,
+  WR_CONCAT,
+  } ;
+
+class WIDTH_REC {
+  public:
+    WRTYPE type;
+    union {
+      int value;	// if WR_VALUE
+      struct {		// if WR_CONCAT
+	int lhsw;
+	int rhsw;
+	// result width is implicit: is lhsw + rhsw
+	} concat;
+      } ;
+  public:
+    friend bool operator<(const WIDTH_REC &l, const WIDTH_REC &r)
+     { if (l.type != r.type) return(l.type<r.type);
+       switch (l.type)
+	{ case WR_VALUE:
+	     return(l.value<r.value);
+	     break;
+	  case WR_CONCAT:
+	     return( (l.concat.lhsw < r.concat.lhsw) ||
+		     ( (l.concat.lhsw == r.concat.lhsw) &&
+		       (l.concat.rhsw < r.concat.rhsw) ) );
+	     break;
+	}
+       return(0);
+     }
+    friend bool operator==(const WIDTH_REC &l, const WIDTH_REC &r)
+     { if (l.type != r.type) return(0);
+       switch (l.type)
+	{ case WR_VALUE:
+	     return(l.value==r.value);
+	     break;
+	  case WR_CONCAT:
+	     return((l.concat.lhsw==r.concat.lhsw)&&(l.concat.rhsw)==(r.concat.rhsw));
+	     break;
+	}
+       return(1);
+     }
+    friend bool operator>(const WIDTH_REC &l, const WIDTH_REC &r) { return(r<l); }
+    friend bool operator>=(const WIDTH_REC &l, const WIDTH_REC &r) { return(!(l<r)); }
+    friend bool operator<=(const WIDTH_REC &l, const WIDTH_REC &r) { return(!(r<l)); }
+    friend bool operator!=(const WIDTH_REC &l, const WIDTH_REC &r) { return(!(l==r)); }
+  } ;
+
+class SCAN_WIDTHS : public Inspector {
+  private:
+    int nwr;
+    WIDTH_REC *wrv;
+    P4::TypeMap *typemap;
+    void insert_wr(WIDTH_REC &);
+    void add_width(int);
+    void add_concat(int, int);
+  public:
+    explicit SCAN_WIDTHS(P4::TypeMap *tm) : nwr(0), wrv(0), typemap(tm) { }
+    ~SCAN_WIDTHS(void) { std::free(wrv); }
+    virtual bool preorder(const IR::Expression *) override;
+    virtual bool preorder(const IR::Concat *) override;
+    profile_t init_apply(const IR::Node *) override;
+    void end_apply(const IR::Node *) override;
+    void revisit_visited();
+    void dump() const;
+    void gen_h(EBPF::CodeBuilder *) const;
+    void gen_c(EBPF::CodeBuilder *) const;
+  } ;
+
 /**
  * Backend code generation from midend IR
  */
@@ -184,7 +254,7 @@ class Extern {
 
 class Backend : public PassManager {
  public:
-    const IR::ToplevelBlock *toplevel;
+    IR::ToplevelBlock *toplevel;
     P4::ReferenceMap *refMap;
     P4::TypeMap *typeMap;
     TCOptions &options;
@@ -196,15 +266,16 @@ class Backend : public PassManager {
     EbpfOptions ebpfOption;
     EBPF::Target *target;
     const PNAEbpfGenerator *ebpf_program;
+    const SCAN_WIDTHS *widths;
 
  public:
-    explicit Backend(const IR::ToplevelBlock *toplevel, P4::ReferenceMap *refMap,
+    explicit Backend(IR::ToplevelBlock *toplevel, P4::ReferenceMap *refMap,
                      P4::TypeMap *typeMap, TCOptions &options)
-        : toplevel(toplevel), refMap(refMap), typeMap(typeMap), options(options) {
+        : toplevel(toplevel), refMap(refMap), typeMap(typeMap), options(options), widths(0) {
         setName("BackEnd");
     }
     bool process();
-    bool ebpfCodeGen(P4::ReferenceMap *refMap, P4::TypeMap *typeMap);
+    bool ebpfCodeGen(P4::ReferenceMap *refMap, P4::TypeMap *typeMap, const IR::P4Program *);
     void serialize() const;
     bool serializeIntrospectionJson(std::ostream &out) const;
     bool emitCFile();

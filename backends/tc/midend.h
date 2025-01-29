@@ -67,7 +67,7 @@ class MidEnd {
 
     void addDebugHook(DebugHook hook) { hooks.push_back(hook); }
     // If p4c is run with option '--listMidendPasses', outStream is used for printing passes names
-    const IR::ToplevelBlock *run(TCOptions &options, const IR::P4Program *program,
+    IR::ToplevelBlock *run(TCOptions &options, const IR::P4Program *program,
                                  std::ostream *outStream = nullptr);
 };
 }  // namespace P4::TC

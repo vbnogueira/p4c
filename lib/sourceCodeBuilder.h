@@ -246,13 +246,14 @@ class SourceCodeBuilder {
     void append(cstring str, LOCARG) { append(str.c_str(),loc); }
     void appendLine(const char *str, LOCARG) {
 	save_trace(loc,"appendLine:");
-        append(str);
-        newline();
+	save_trace_more(str);
+	append(str,loc);
+        newline(loc);
     }
     void appendLine(cstring str, LOCARG) {
 	save_trace(loc,"appendLine:");
-        append(str);
-        newline();
+        append(str,loc);
+        newline(loc);
     }
     void append(const std::string &str, LOCARG) {
         if (str.empty()) return;
