@@ -2894,4 +2894,18 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Neg *e)
  return(false);
 }
 
+bool ControlBodyTranslatorPNA::preorder(const IR::Cmpl *e)
+{
+ assert(e->type->is<IR::Type_Bits>());
+ auto w = e->type->to<IR::Type_Bits>()->width_bits();
+ if (w <= 64)
+  { // See inheritance comment above
+    return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
+  }
+ builder->appendFormat("not_%d(",w);
+ visit(e->expr);
+ builder->append(")");
+ return(false);
+}
+
 }  // namespace P4::TC

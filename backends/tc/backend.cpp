@@ -85,6 +85,9 @@ void SCAN_WIDTHS::dump() const
        case WR_NEG:
 	  std::cout << "NEG: " << wr->arith.w;
 	  break;
+       case WR_NOT:
+	  std::cout << "NOT: " << wr->arith.w;
+	  break;
        default:
 	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
 	  break;
@@ -216,6 +219,11 @@ bool SCAN_WIDTHS::preorder(const IR::Neg *e)
  return(arith_common_1(e,WR_NEG));
 }
 
+bool SCAN_WIDTHS::preorder(const IR::Cmpl *e)
+{
+ return(arith_common_1(e,WR_NOT));
+}
+
 // There's _got_ to be a C++ standard object that can do this better.
 //  std::set maybe?  "_First_ make it work, _then_ make it better."
 void SCAN_WIDTHS::insert_wr(WIDTH_REC &wr)
@@ -319,6 +327,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
        case WR_BXSMUL:
        case WR_CAST:
        case WR_NEG:
+       case WR_NOT:
 	  break;
        default:
 	  abort();
@@ -358,6 +367,11 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  break;
        case WR_NEG:
 	  opname = "neg";
+	  if (0)
+	   {
+       case WR_NOT:
+	     opname = "not";
+	   }
 	  bld->newline();
 	  assert(wrv[i].arith.w > 64);
 	  bld->appendFormat("extern struct internal_bit_%d %s_%d(struct internal_bit_%d);\n",
@@ -593,6 +607,26 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	      }
 	     if (w & 7)
 	      { bld->appendFormat(" ret->bits[%d] = (%s + (255 ^ arg->bits[%d])) & %d;\n",j?"(a >> 8)":"1",j,j,(1<<(w&7))-1);
+	      }
+	     bld->append(" return(ret);\n");
+	     bld->append(/*{*/"}\n");
+	   }
+	  break;
+       case WR_NOT:
+	   { unsigned int w = wrv[i].arith.w;
+	     int i;
+	     int j;
+	     assert(w > 64);
+	     bld->newline();
+	     bld->appendFormat("struct internal_bit_%u not_%u(struct internal_bit_%d arg)\n",w,w,w);
+	     bld->append("{\n"/*}*/);
+	     bld->append(" u16 a;\n");
+	     bld->append("\n");
+	     for (i=(w>>3)-1,j=0;i>=0;i--,j++)
+	      { bld->appendFormat(" ret->bits[%d] = ~arg->bits[%d];\n",j,j);
+	      }
+	     if (w & 7)
+	      { bld->appendFormat(" ret->bits[%d] = arg->bits[%d] ^ %d;\n",j,j,(1<<(w&7))-1);
 	      }
 	     bld->append(" return(ret);\n");
 	     bld->append(/*{*/"}\n");
