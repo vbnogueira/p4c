@@ -2871,12 +2871,20 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Cast *e)
     return(false);
   }
  if ((fw <= 64) && (tw <= 64))
-  { // See inheritance comment above
-    return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
+  { // This (see inheritance comment above) does not work.
+    // This - somehow - produces infinite recursion.
+    // return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
+    // So, instead, this.  I hope it works well enough.
+    builder->append("(u64)(");
+    visit(e->expr);
+    builder->append(")");
+    if (tw < fw) builder->appendFormat("&%lluu",(1ULL<<tw)-1ULL);
   }
- builder->appendFormat("cast_%d_to_%d(",fw,tw);
- visit(e->expr);
- builder->append(")");
+ else
+  { builder->appendFormat("cast_%d_to_%d(",fw,tw);
+    visit(e->expr);
+    builder->append(")");
+  }
  return(false);
 }
 
