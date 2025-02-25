@@ -88,6 +88,12 @@ void SCAN_WIDTHS::dump() const
        case WR_NOT:
 	  std::cout << "NOT: " << wr->arith.w;
 	  break;
+       case WR_SHL_X:
+	  std::cout << "SHL_X: " << wr->shift_x.lw << ' ' << wr->shift_x.rw;
+	  break;
+       case WR_SHL_C:
+	  std::cout << "SHL_C: " << wr->shift_c.lw << ' ' << wr->shift_c.sv;
+	  break;
        default:
 	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
 	  break;
@@ -224,6 +230,27 @@ bool SCAN_WIDTHS::preorder(const IR::Cmpl *e)
  return(arith_common_1(e,WR_NOT));
 }
 
+bool SCAN_WIDTHS::preorder(const IR::Shl *e)
+{
+ expr_common(e);
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt)
+  { auto rc = e->right->to<IR::Constant>();
+    if (rc)
+     { if (rc->value < lt->width_bits())
+	{ add_shift_c(WR_SHL_C,lt->width_bits(),static_cast<unsigned int>(rc->value));
+	}
+     }
+    else
+     { auto rt = e->right->type->to<IR::Type_Bits>();
+       if (rt)
+	{ add_shift_x(WR_SHL_X,lt->width_bits(),rt->width_bits());
+	}
+     }
+  }
+ return(true);
+}
+
 // There's _got_ to be a C++ standard object that can do this better.
 //  std::set maybe?  "_First_ make it work, _then_ make it better."
 void SCAN_WIDTHS::insert_wr(WIDTH_REC &wr)
@@ -305,6 +332,28 @@ void SCAN_WIDTHS::add_cast(unsigned int fw, unsigned int tw)
  insert_wr(wr);
 }
 
+void SCAN_WIDTHS::add_shift_c(WRTYPE t, unsigned int lw, unsigned int sv)
+{
+ WIDTH_REC wr;
+
+ if (lw <= 64) return;
+ wr.type = t;
+ wr.shift_c.lw = lw;
+ wr.shift_c.sv = sv;
+ insert_wr(wr);
+}
+
+void SCAN_WIDTHS::add_shift_x(WRTYPE t, unsigned int lw, unsigned int rw)
+{
+ WIDTH_REC wr;
+
+ if ((lw <= 64) && (rw <= 64)) return;
+ wr.type = t;
+ wr.shift_x.lw = lw;
+ wr.shift_x.rw = rw;
+ insert_wr(wr);
+}
+
 void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 {
  int i;
@@ -328,6 +377,8 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
        case WR_CAST:
        case WR_NEG:
        case WR_NOT:
+       case WR_SHL_X:
+       case WR_SHL_C:
 	  break;
        default:
 	  abort();
@@ -391,6 +442,26 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  append_type_for_width(bld,wrv[i].cast.tw);
 	  bld->appendFormat(" cast_%u_to_%u(",wrv[i].cast.fw,wrv[i].cast.tw);
 	  append_type_for_width(bld,wrv[i].cast.fw);
+	  bld->append(");\n");
+	  break;
+       case WR_SHL_X:
+	  bld->newline();
+	  assert((wrv[i].shift_x.lw > 64) || (wrv[i].shift_x.rw > 64));
+	  bld->append("extern ");
+	  append_type_for_width(bld,wrv[i].shift_x.lw);
+	  bld->appendFormat(" shl_%u_x_%u(",wrv[i].shift_x.lw,wrv[i].shift_x.rw);
+	  append_type_for_width(bld,wrv[i].shift_x.lw);
+	  bld->append(", ");
+	  append_type_for_width(bld,wrv[i].shift_x.rw);
+	  bld->append(");\n");
+	  break;
+       case WR_SHL_C:
+	  bld->newline();
+	  assert(wrv[i].shift_c.lw > 64);
+	  bld->append("extern ");
+	  append_type_for_width(bld,wrv[i].shift_c.lw);
+	  bld->appendFormat(" shl_%u_c_%u(",wrv[i].shift_c.lw,wrv[i].shift_c.sv);
+	  append_type_for_width(bld,wrv[i].shift_c.lw);
 	  bld->append(");\n");
 	  break;
        default:
@@ -670,6 +741,157 @@ static void gen_not(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(/*{*/"}\n");
 }
 
+static void gen_shl_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int lw;
+ unsigned int rw;
+ const char *indent;
+ const char *shvar;
+ int i;
+ int s_set;
+
+ assert(wr->type == WR_SHL_X);
+ lw = wr->shift_x.lw;
+ rw = wr->shift_x.rw;
+ assert((lw > 64) || (rw > 64));
+ bld->newline();
+ append_type_for_width(bld,lw);
+ bld->appendFormat(" shl_%u_x_%u(",lw,rw);
+ append_type_for_width(bld,lw);
+ bld->append(" v, ");
+ append_type_for_width(bld,rw);
+ bld->append(" sh)\n");
+ bld->append("{\n"/*}*/);
+ if (rw >= 64) bld->append(" unsigned int s;\n");
+ bld->append(" unsigned int i;\n");
+ if (lw >= 64) bld->appendFormat(" internal_bit_%u rv;\n",lw);
+ bld->append(" u16 a;\n");
+ bld->append(" unsigned int left;\n");
+ bld->append(" unsigned int o;\n");
+ bld->append("\n");
+ if (rw <= 64)
+  { bld->appendFormat(" if (sh >= %u) return(",lw);
+    if (lw <= 64)
+     { bld->append("0\n");
+     }
+    else
+     { bld->appendFormat("(struct internal_bit_%u){0}",lw);
+     }
+    bld->append(");\n");
+    indent = " ";
+    shvar = "sh";
+  }
+ else
+  { bld->append(" do\n");
+    indent = "  { "/*}*/;
+    if (rw & 7)
+     { bld->appendFormat("%ss = sh->bits[%d] & %d;\n",indent,rw>>3,(1<<(rw&7))-1);
+       indent = "    ";
+       if ((1U<<(rw&7))-1U >= lw) bld->appendFormat("    if (s >= %u) break;\n",lw);
+       s_set = 1;
+     }
+    else
+     { s_set = 0;
+     }
+    // rw >= 64, so this loop runs at least once
+    for (i=rw>>3;i>=0;i--)
+     { bld->appendFormat("%ss = %ssh->bits[%d]%s;\n",indent,s_set?"(s << 8) | (":"",i,s_set?")":"");
+       indent = "    ";
+       bld->appendFormat("    if (s >= %u) break;\n",lw);
+     }
+    shvar = "s";
+  }
+ // indent must be all spaces by this point
+ if (lw <= 64)
+  { bld->appendFormat("%sreturn(v<<%s);\n",indent,shvar);
+  }
+ else
+  { bld->appendFormat("%sfor (o=0;%s>=8;o++,%s-=8) rv->bits[o] = 0;\n",indent,shvar,shvar);
+    bld->appendFormat("%sa = 0;\n",indent);
+    bld->appendFormat("%sleft = %u - %s;\n",indent,lw,shvar);
+    bld->appendFormat("%si = 0;\n",indent);
+    bld->appendFormat("%sfor (;left>=8;left-=8)\n",indent);
+    bld->appendFormat("%s { a = (a >> 8) | (v->bits[i++] << %s);\n"/*}*/,indent,shvar);
+    bld->appendFormat("%s   rv->bits[o++] = a & 255;\n",indent);
+    bld->appendFormat(/*{*/"%s }\n",indent);
+    bld->appendFormat("%sif (left)\n",indent);
+    bld->appendFormat("%s { a = (a >> 8) | (v->bits[i++] << %s);\n"/*}*/,indent,shvar);
+    bld->appendFormat("%s   rv->bits[o++] = a & ((1U << left) - 1);\n",indent);
+    bld->appendFormat(/*{*/"%s }\n",indent);
+  }
+ bld->appendFormat("%sreturn(rv);\n",indent);
+ if (rw > 64)
+  { bld->append(/*{*/"  } while (0);\n");
+    bld->append(" return(");
+    if (lw <= 64)
+     { bld->append("0\n");
+     }
+    else
+     { bld->appendFormat("(struct internal_bit_%u){0}",lw);
+     }
+    bld->append(");\n");
+  }
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_shl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int lw;
+ unsigned int sv;
+ int o;
+ int i;
+ const char *pref;
+ const char *suff;
+ int nb;
+
+ assert(wr->type == WR_SHL_C);
+ lw = wr->shift_c.lw;
+ sv = wr->shift_c.sv;
+ assert((lw > 64) && (sv < lw));
+ bld->newline();
+ bld->appendFormat("struct internal_bit_%u shl_%u_c_%u(struct internal_bit_%u v)\n",lw,lw,sv,lw);
+ bld->append("{\n"/*}*/);
+ if (sv == 0)
+  { /*
+     * Can this even happen?  Shifting by a zero constant is the kind
+     *	of thing I'd expect to get optimized away in an MI way.  But
+     *	it's easy to DTRT here....
+     */
+    bld->append(" return(v);\n");
+  }
+ else
+  { bld->appendFormat(" internal_bit_%u rv;\n",lw);
+    o = sv >> 3;
+    sv &= 7;
+    if (sv) bld->append(" u16 a;\n");
+    bld->append("\n");
+    if (o) bld->appendFormat(" __builtin_memset(&rv.bits[0],0,%u);\n",o);
+    if (sv)
+     { pref = "";
+       suff = "";
+       // This can be optimized more in some cases.
+       // "First make it work..."
+       i = 0;
+       nb = lw >> 3;
+       for (;o<nb;o++,i++)
+	{ bld->appendFormat(" a = %sv->bits[%u] << %u%s;\n",pref,i,sv,suff);
+	  pref = "(a >> 8) | (";
+	  suff = ")";
+	  bld->appendFormat(" rv.bits[%u] = a & 255;\n",o);
+	}
+       if (lw & 7)
+	{ bld->appendFormat(" a = %sv->bits[%u] << %u%s;\n",pref,i,sv,suff);
+	  bld->appendFormat(" rv.bits[%u] = a & %u\n",o,(1U<<(lw&7))-1U);
+	}
+     }
+    else
+     { bld->appendFormat(" __builtin_memcpy(&rv.bits[%u],&v.bits[0],%u);\n",o,(lw>>3)-o);
+       if (lw & 7) bld->appendFormat(" rv.bits[%u] = v.bits[%u] & %u;\n",lw>>3,(lw>>3)-o,(1U<<(lw&7))-1U);
+     }
+  }
+ bld->append(/*{*/"}\n");
+}
+
 void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 {
  int i;
@@ -703,6 +925,12 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	  break;
        case WR_NOT:
 	  gen_not(bld,&wrv[i]);
+	  break;
+       case WR_SHL_X:
+	  gen_shl_x(bld,&wrv[i]);
+	  break;
+       case WR_SHL_C:
+	  gen_shl_c(bld,&wrv[i]);
 	  break;
        default:
 	  abort();

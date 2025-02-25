@@ -73,6 +73,8 @@ enum WRTYPE {
   WR_CAST,
   WR_NEG,
   WR_NOT,
+  WR_SHL_X,
+  WR_SHL_C,
   } ;
 
 class WIDTH_REC {
@@ -101,6 +103,16 @@ class WIDTH_REC {
 	int fw;
 	int tw;
 	} cast;
+      // if WR_SHL_X
+      struct {
+	int lw;
+	int rw;
+	} shift_x;
+      // if WR_SHL_C
+      struct {
+	int lw;
+	unsigned int sv;
+	} shift_c;
       } ;
   public:
     friend bool operator<(const WIDTH_REC &l, const WIDTH_REC &r)
@@ -131,6 +143,16 @@ class WIDTH_REC {
 		     ( (l.cast.fw == r.cast.fw) &&
 		       (l.cast.tw < r.cast.tw) ) );
 	     break;
+	  case WR_SHL_X:
+	     return( (l.shift_x.lw < r.shift_x.lw) ||
+		     ( (l.shift_x.lw == r.shift_x.lw) &&
+		       ( (l.shift_x.rw < r.shift_x.rw) ) ) );
+	     break;
+	  case WR_SHL_C:
+	     return( (l.shift_c.lw < r.shift_c.lw) ||
+		     ( (l.shift_c.lw == r.shift_c.lw) &&
+		       ( (l.shift_c.sv < r.shift_c.sv) ) ) );
+	     break;
 	}
        return(0);
      }
@@ -156,6 +178,12 @@ class WIDTH_REC {
 	  case WR_CAST:
 	     return((l.cast.fw==r.cast.fw)&&(l.cast.tw==r.cast.tw));
 	     break;
+	  case WR_SHL_X:
+	     return((l.shift_x.lw==r.shift_x.lw)&&(l.shift_x.rw==r.shift_x.rw));
+	     break;
+	  case WR_SHL_C:
+	     return((l.shift_c.lw==r.shift_c.lw)&&(l.shift_c.sv==r.shift_c.sv));
+	     break;
 	}
        return(1);
      }
@@ -177,6 +205,8 @@ class SCAN_WIDTHS : public Inspector {
     void add_bxsmul(int, unsigned int);
     void add_cast(unsigned int, unsigned int);
     bool big_x_small_mul(const IR::Expression *, const IR::Constant *);
+    void add_shift_c(WRTYPE, unsigned int, unsigned int);
+    void add_shift_x(WRTYPE, unsigned int, unsigned int);
   public:
     explicit SCAN_WIDTHS(P4::TypeMap *tm) : nwr(0), wrv(0), typemap(tm) { }
     ~SCAN_WIDTHS(void) { std::free(wrv); }
@@ -189,6 +219,7 @@ class SCAN_WIDTHS : public Inspector {
     virtual bool preorder(const IR::Cast *) override;
     virtual bool preorder(const IR::Neg *) override;
     virtual bool preorder(const IR::Cmpl *) override;
+    virtual bool preorder(const IR::Shl *) override;
     bool arith_common_2(const IR::Operation_Binary *, WRTYPE, bool = true);
     bool arith_common_1(const IR::Operation_Unary *, WRTYPE, bool = true);
     profile_t init_apply(const IR::Node *) override;

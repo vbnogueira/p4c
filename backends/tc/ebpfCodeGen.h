@@ -411,6 +411,7 @@ class ControlBodyTranslatorPNA : public EBPF::ControlBodyTranslator {
     bool preorder(const IR::Cast *) override;
     bool preorder(const IR::Neg *) override;
     bool preorder(const IR::Cmpl *) override;
+    bool preorder(const IR::Shl *) override;
     bool big_x_small_mul(const IR::Expression *, const IR::Constant *);
 };
 
