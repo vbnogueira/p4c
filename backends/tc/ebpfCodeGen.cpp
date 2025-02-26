@@ -2867,7 +2867,7 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Cast *e)
  auto fw = e->expr->type->to<IR::Type_Bits>()->width_bits();
  auto tw = e->type->to<IR::Type_Bits>()->width_bits();
  if (fw == tw)
-  { visit(e);
+  { visit(e->expr);
     return(false);
   }
  if ((fw <= 64) && (tw <= 64))
