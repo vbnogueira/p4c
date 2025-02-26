@@ -51,6 +51,19 @@ static void append_type_for_width(EBPF::CodeBuilder *bld, unsigned int w)
  else        bld->append("u64");
 }
 
+static const char *cmp_string(unsigned char c)
+{
+ switch (c)
+  { case CMP_EQ: return("eq"); break;
+    case CMP_NE: return("ne"); break;
+    case CMP_LT: return("lt");  break;
+    case CMP_LE: return("le"); break;
+    case CMP_GT: return("gt");  break;
+    case CMP_GE: return("ge"); break;
+  }
+ assert(!"Invalid call to cmp_string");
+}
+
 void SCAN_WIDTHS::dump() const
 {
  int i;
@@ -105,6 +118,11 @@ void SCAN_WIDTHS::dump() const
 	  break;
        case WR_SHRL_C:
 	  std::cout << "SHRL_C: " << wr->shift_c.lw << ' ' << wr->shift_c.sv;
+	  break;
+       case WR_CMP:
+	  std::cout << "CMP: " << wr->cmp.w <<
+		((wr->cmp.cmp & CMP_SIGNED) ? " signed " : " unsigned ") <<
+		cmp_string(wr->cmp.cmp&CMP_BASE);
 	  break;
        default:
 	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
@@ -284,6 +302,54 @@ bool SCAN_WIDTHS::preorder(const IR::Shr *e)
  return(true);
 }
 
+bool SCAN_WIDTHS::preorder(const IR::Equ *e)
+{
+ expr_common(e);
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt) add_cmp(lt->width_bits(),CMP_EQ); // isSigned doesn't matter for eq
+ return(true);
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Neq *e)
+{
+ expr_common(e);
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt) add_cmp(lt->width_bits(),CMP_NE); // isSigned doesn't matter for ne
+ return(true);
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Lss *e)
+{
+ expr_common(e);
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt) add_cmp(lt->width_bits(),CMP_LT|(lt->isSigned?CMP_SIGNED:0));
+ return(true);
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Leq *e)
+{
+ expr_common(e);
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt) add_cmp(lt->width_bits(),CMP_LE|(lt->isSigned?CMP_SIGNED:0));
+ return(true);
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Grt *e)
+{
+ expr_common(e);
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt) add_cmp(lt->width_bits(),CMP_GT|(lt->isSigned?CMP_SIGNED:0));
+ return(true);
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Geq *e)
+{
+ expr_common(e);
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt) add_cmp(lt->width_bits(),CMP_GE|(lt->isSigned?CMP_SIGNED:0));
+ return(true);
+}
+
 // There's _got_ to be a C++ standard object that can do this better.
 //  std::set maybe?  "_First_ make it work, _then_ make it better."
 void SCAN_WIDTHS::insert_wr(WIDTH_REC &wr)
@@ -387,6 +453,17 @@ void SCAN_WIDTHS::add_shift_x(WRTYPE t, unsigned int lw, unsigned int rw)
  insert_wr(wr);
 }
 
+void SCAN_WIDTHS::add_cmp(unsigned int w, unsigned char c)
+{
+ WIDTH_REC wr;
+
+ if (w <= 64) return;
+ wr.type = WR_CMP;
+ wr.cmp.w = w;
+ wr.cmp.cmp = c;
+ insert_wr(wr);
+}
+
 void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 {
  int i;
@@ -416,6 +493,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
        case WR_SHRA_C:
        case WR_SHRL_X:
        case WR_SHRL_C:
+       case WR_CMP:
 	  break;
        default:
 	  abort();
@@ -540,6 +618,15 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  bld->appendFormat(" shrl_%u_c_%u(",wrv[i].shift_c.lw,wrv[i].shift_c.sv);
 	  append_type_for_width(bld,wrv[i].shift_c.lw);
 	  bld->append(");\n");
+	  break;
+       case WR_CMP:
+	  bld->newline();
+	  assert(wrv[i].cmp.w > 64);
+	  bld->appendFormat("extern int cmp_%s_%u_%s(struct internal_bit_%u);",
+		(wrv[i].cmp.cmp & CMP_SIGNED) ? "s" : "u",
+		wrv[i].cmp.w,
+		cmp_string(wrv[i].cmp.cmp&CMP_BASE),
+		wrv[i].cmp.w );
 	  break;
        default:
 	  abort();
@@ -1123,6 +1210,69 @@ static void gen_shrl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(/*{*/"}\n");
 }
 
+static void gen_cmp(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int w;
+
+ assert(wr->type == WR_CMP);
+ w = wr->cmp.w;
+ bld->newline();
+ bld->appendFormat("int cmp_%s_%u_%s(internal_bit_%u l, internal_bit_%u r)\n",
+	(wr->cmp.cmp & CMP_SIGNED) ? "s" : "u",
+	w,
+	cmp_string(wr->cmp.cmp&CMP_BASE),
+	w,
+	w );
+ bld->append("{\n"/*}*/);
+ switch (wr->cmp.cmp)
+  { case CMP_EQ:
+       bld->append(" return(");
+       if (w & 7) bld->appendFormat("!((l.bits[%u]^r.bits[%u])&%u)&&",w>>3,w>>3,(1U<<(w&7))-1U);
+       bld->appendFormat("!__builtin_memcmp(&l.bits[0],&r.bits[0],%u));",w>>3);
+       break;
+    case CMP_NE:
+       bld->append(" return(");
+       if (w & 7) bld->appendFormat("((l.bits[%u]^r.bits[%u])&%u)||",w>>3,w>>3,(1U<<(w&7))-1U);
+       bld->appendFormat("__builtin_memcmp(&l.bits[0],&r.bits[0],%u));",w>>3);
+       break;
+	{ const char *t_op;
+	  const char *f_op;
+	  const char *pref;
+	  const char *suff;
+	  const char *postop;
+	  unsigned int postnum;
+	  int eqrv;
+    case CMP_LT:              f_op = ">"; t_op = "<"; eqrv = 0; pref = ""; postop = "&"; suff = ""; postnum = (1U<<(w&7))-1U;   if (0) {
+    case CMP_LE:              f_op = ">"; t_op = "<"; eqrv = 1; pref = ""; postop = "&"; suff = ""; postnum = (1U<<(w&7))-1U; } if (0) {
+    case CMP_GT:              f_op = "<"; t_op = ">"; eqrv = 0; pref = ""; postop = "&"; suff = ""; postnum = (1U<<(w&7))-1U; } if (0) {
+    case CMP_GE:              f_op = "<"; t_op = ">"; eqrv = 1; pref = ""; postop = "&"; suff = ""; postnum = (1U<<(w&7))-1U; } if (0) {
+    case CMP_LT | CMP_SIGNED: f_op = ">"; t_op = "<"; eqrv = 0; pref = "((i8)"; postop = "<<"; suff = ")"; postnum = 8-(w&7); } if (0) {
+    case CMP_LE | CMP_SIGNED: f_op = ">"; t_op = "<"; eqrv = 1; pref = "((i8)"; postop = "<<"; suff = ")"; postnum = 8-(w&7); } if (0) {
+    case CMP_GT | CMP_SIGNED: f_op = "<"; t_op = ">"; eqrv = 0; pref = "((i8)"; postop = "<<"; suff = ")"; postnum = 8-(w&7); } if (0) {
+    case CMP_GE | CMP_SIGNED: f_op = "<"; t_op = ">"; eqrv = 1; pref = "((i8)"; postop = "<<"; suff = ")"; postnum = 8-(w&7); }
+	  bld->append(" int i;\n");
+	  bld->append("\n");
+	  if (w & 7)
+	   { bld->appendFormat(" if (%s(l.bits[%u] %s %u)%s %s %s(r.bits[%u] %s %u)%s) return(1);\n",
+			pref, w>>3, postop, postnum, suff,
+			t_op,
+			pref, w>>3, postop, postnum, suff );
+	     bld->appendFormat(" if (%s(l.bits[%u] %s %u)%s %s %s(r.bits[%u] %s %u)%s) return(0);\n",
+			pref, w>>3, postop, postnum, suff,
+			f_op,
+			pref, w>>3, postop, postnum, suff );
+	   }
+	  bld->appendFormat(" for (i=%u;i>=0;i--)\n",(w>>3)-1);
+	  bld->appendFormat("  { if (l.bits[i] %s r.bits[i]) return(1);\n"/*}*/,t_op);
+	  bld->appendFormat("    if (l.bits[i] %s r.bits[i]) return(0);\n",f_op);
+	  bld->append(/*{*/"  }\n");
+	  bld->appendFormat(" return(%d);\n",eqrv);
+	}
+       break;
+  }
+ bld->append(/*{*/"}\n");
+}
+
 void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 {
  int i;
@@ -1174,6 +1324,9 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	  break;
        case WR_SHRL_C:
 	  gen_shrl_c(bld,&wrv[i]);
+	  break;
+       case WR_CMP:
+	  gen_cmp(bld,&wrv[i]);
 	  break;
        default:
 	  abort();

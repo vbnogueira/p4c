@@ -2997,4 +2997,97 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Shr *e)
  return(false);
 }
 
+static void gen_cmp(ControlBodyTranslatorPNA *cbt, EBPF::CodeBuilder *bld, const IR::Operation_Binary *e, const char *small, const char *large)
+{
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ assert(lt);
+ auto rt = e->right->type->to<IR::Type_Bits>();
+ assert(rt);
+ auto w = lt->width_bits();
+ assert(w==rt->width_bits());
+ assert(lt->isSigned==rt->isSigned);
+ if (w <= 64)
+  { switch (small[0])
+     { case '=': case '!':
+	  cbt->visit(e->left);
+	  bld->appendFormat("%s",small);
+	  cbt->visit(e->right);
+	  break;
+       case '<': case '>':
+	  if (lt->isSigned)
+	   { int cw;
+	     bool exact;
+		  if (w <   8) { cw =  8; exact = false; }
+	     else if (w ==  8) { cw =  8; exact = true;  }
+	     else if (w <  16) { cw = 16; exact = false; }
+	     else if (w == 16) { cw = 16; exact = true;  }
+	     else if (w <  32) { cw = 32; exact = false; }
+	     else if (w == 32) { cw = 32; exact = true;  }
+	     else if (w <  64) { cw = 64; exact = false; }
+	     else if (w == 64) { cw = 64; exact = true;  }
+	     else assert(!"Impossible width in gen_cmp");
+	     bld->appendFormat("((i%d)(",cw);
+	     cbt->visit(e->left);
+	     if (exact) bld->append("))"); else bld->appendFormat(")<<%u)",cw-w);
+	     bld->appendFormat("%s",small);
+	     bld->appendFormat("((i%d)(",cw);
+	     cbt->visit(e->right);
+	     if (exact) bld->append("))"); else bld->appendFormat(")<<%u)",cw-w);
+	   }
+	  else
+	   { cbt->visit(e->left);
+	     bld->appendFormat("%s",small);
+	     cbt->visit(e->right);
+	   }
+	  break;
+       default:
+	  assert(!"Invalid call to gen_cmp");
+	  break;
+     }
+  }
+ else
+  { bld->appendFormat("cmp_%s_%u_%s(",lt->isSigned?"s":"u",w,large);
+    cbt->visit(e->left);
+    bld->append(',');
+    cbt->visit(e->right);
+    bld->append(')');
+  }
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::Equ *e)
+{
+ gen_cmp(this,builder,e,"==","eq");
+ return(false);
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::Neq *e)
+{
+ gen_cmp(this,builder,e,"!=","ne");
+ return(false);
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::Lss *e)
+{
+ gen_cmp(this,builder,e,"<","lt");
+ return(false);
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::Leq *e)
+{
+ gen_cmp(this,builder,e,"<=","le");
+ return(false);
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::Grt *e)
+{
+ gen_cmp(this,builder,e,">","gt");
+ return(false);
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::Geq *e)
+{
+ gen_cmp(this,builder,e,">=","ge");
+ return(false);
+}
+
 }  // namespace P4::TC

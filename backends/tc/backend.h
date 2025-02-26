@@ -79,6 +79,7 @@ enum WRTYPE {
   WR_SHRA_C,
   WR_SHRL_X,
   WR_SHRL_C,
+  WR_CMP,
   } ;
 
 class WIDTH_REC {
@@ -117,6 +118,19 @@ class WIDTH_REC {
 	int lw;
 	unsigned int sv;
 	} shift_c;
+      // if WR_CMP
+      struct {
+	int w;
+	unsigned char cmp;
+#define CMP_EQ 0x01
+#define CMP_NE 0x02
+#define CMP_LT 0x03
+#define CMP_GE 0x04
+#define CMP_GT 0x05
+#define CMP_LE 0x06
+#define CMP_BASE 0x07
+#define CMP_SIGNED 0x08
+	} cmp;
       } ;
   public:
     friend bool operator<(const WIDTH_REC &l, const WIDTH_REC &r)
@@ -161,6 +175,10 @@ class WIDTH_REC {
 		     ( (l.shift_c.lw == r.shift_c.lw) &&
 		       ( (l.shift_c.sv < r.shift_c.sv) ) ) );
 	     break;
+	  case WR_CMP:
+	     return( (l.cmp.w < r.cmp.w) ||
+		     ( (l.cmp.w == r.cmp.w) &&
+		       (l.cmp.cmp < r.cmp.cmp) ) );
 	}
        return(0);
      }
@@ -196,6 +214,9 @@ class WIDTH_REC {
 	  case WR_SHRL_C:
 	     return((l.shift_c.lw==r.shift_c.lw)&&(l.shift_c.sv==r.shift_c.sv));
 	     break;
+	  case WR_CMP:
+	     return((l.cmp.w==r.cmp.w)&&(l.cmp.cmp==r.cmp.cmp));
+	     break;
 	}
        return(1);
      }
@@ -219,6 +240,7 @@ class SCAN_WIDTHS : public Inspector {
     bool big_x_small_mul(const IR::Expression *, const IR::Constant *);
     void add_shift_c(WRTYPE, unsigned int, unsigned int);
     void add_shift_x(WRTYPE, unsigned int, unsigned int);
+    void add_cmp(unsigned int, unsigned char);
   public:
     explicit SCAN_WIDTHS(P4::TypeMap *tm) : nwr(0), wrv(0), typemap(tm) { }
     ~SCAN_WIDTHS(void) { std::free(wrv); }
@@ -233,6 +255,12 @@ class SCAN_WIDTHS : public Inspector {
     virtual bool preorder(const IR::Cmpl *) override;
     virtual bool preorder(const IR::Shl *) override;
     virtual bool preorder(const IR::Shr *) override;
+    virtual bool preorder(const IR::Equ *) override;
+    virtual bool preorder(const IR::Neq *) override;
+    virtual bool preorder(const IR::Lss *) override;
+    virtual bool preorder(const IR::Leq *) override;
+    virtual bool preorder(const IR::Grt *) override;
+    virtual bool preorder(const IR::Geq *) override;
     bool arith_common_2(const IR::Operation_Binary *, WRTYPE, bool = true);
     bool arith_common_1(const IR::Operation_Unary *, WRTYPE, bool = true);
     profile_t init_apply(const IR::Node *) override;
