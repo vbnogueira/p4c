@@ -3090,4 +3090,9 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Geq *e)
  return(false);
 }
 
+bool ControlBodyTranslatorPNA::preorder(const IR::BAnd *e)
+{
+ return(arith_common(e,"&","bitand"));
+}
+
 }  // namespace P4::TC

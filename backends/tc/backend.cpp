@@ -124,6 +124,9 @@ void SCAN_WIDTHS::dump() const
 		((wr->cmp.cmp & CMP_SIGNED) ? " signed " : " unsigned ") <<
 		cmp_string(wr->cmp.cmp&CMP_BASE);
 	  break;
+       case WR_BITAND:
+	  std::cout << "BITAND: " << wr->arith.w;
+	  break;
        default:
 	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
 	  break;
@@ -350,6 +353,11 @@ bool SCAN_WIDTHS::preorder(const IR::Geq *e)
  return(true);
 }
 
+bool SCAN_WIDTHS::preorder(const IR::BAnd *e)
+{
+ return(arith_common_2(e,WR_BITAND));
+}
+
 // There's _got_ to be a C++ standard object that can do this better.
 //  std::set maybe?  "_First_ make it work, _then_ make it better."
 void SCAN_WIDTHS::insert_wr(WIDTH_REC &wr)
@@ -494,6 +502,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
        case WR_SHRL_X:
        case WR_SHRL_C:
        case WR_CMP:
+       case WR_BITAND:
 	  break;
        default:
 	  abort();
@@ -525,6 +534,11 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	   {
        case WR_MUL:
 	     opname = "mul";
+	   }
+	  if (0)
+	   {
+       case WR_BITAND:
+	     opname = "bitand";
 	   }
 	  bld->newline();
 	  assert(wrv[i].arith.w > 64);
@@ -1273,6 +1287,25 @@ static void gen_cmp(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(/*{*/"}\n");
 }
 
+static void gen_bitand(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int w;
+ int b;
+ int i;
+
+ assert(wr->type == WR_BITAND);
+ w = wr->arith.w;
+ b = (w + 7) >> 3;
+ bld->newline();
+ bld->appendFormat("struct internal_bit_%d bitand_%d(struct internal_bit_%d lhs, struct internal_bit_%d rhs)\n",w,w,w,w);
+ bld->append("{\n"/*}*/);
+ bld->appendFormat(" struct internal_bit_%d ret;\n",w);
+ bld->append("\n");
+ for (i=0;i<b;i++) bld->appendFormat(" ret.bits[%u] = lhs->bits[%u] & rhs->bits[%u];\n",i,i,i);
+ bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
 void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 {
  int i;
@@ -1327,6 +1360,9 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	  break;
        case WR_CMP:
 	  gen_cmp(bld,&wrv[i]);
+	  break;
+       case WR_BITAND:
+	  gen_bitand(bld,&wrv[i]);
 	  break;
        default:
 	  abort();
