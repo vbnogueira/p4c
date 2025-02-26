@@ -3100,4 +3100,9 @@ bool ControlBodyTranslatorPNA::preorder(const IR::BOr *e)
  return(arith_common(e,"|","bitor"));
 }
 
+bool ControlBodyTranslatorPNA::preorder(const IR::BXor *e)
+{
+ return(arith_common(e,"^","bitxor"));
+}
+
 }  // namespace P4::TC

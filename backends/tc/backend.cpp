@@ -130,6 +130,9 @@ void SCAN_WIDTHS::dump() const
        case WR_BITOR:
 	  std::cout << "BITOR: " << wr->arith.w;
 	  break;
+       case WR_BITXOR:
+	  std::cout << "BITXOR: " << wr->arith.w;
+	  break;
        default:
 	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
 	  break;
@@ -366,6 +369,11 @@ bool SCAN_WIDTHS::preorder(const IR::BOr *e)
  return(arith_common_2(e,WR_BITOR));
 }
 
+bool SCAN_WIDTHS::preorder(const IR::BXor *e)
+{
+ return(arith_common_2(e,WR_BITXOR));
+}
+
 // There's _got_ to be a C++ standard object that can do this better.
 //  std::set maybe?  "_First_ make it work, _then_ make it better."
 void SCAN_WIDTHS::insert_wr(WIDTH_REC &wr)
@@ -512,6 +520,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
        case WR_CMP:
        case WR_BITAND:
        case WR_BITOR:
+       case WR_BITXOR:
 	  break;
        default:
 	  abort();
@@ -536,7 +545,8 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
        case WR_SUB:    opname = "sub";    } if (0) {
        case WR_MUL:    opname = "mul";    } if (0) {
        case WR_BITAND: opname = "bitand"; } if (0) {
-       case WR_BITOR:  opname = "bitor";  }
+       case WR_BITOR:  opname = "bitor";  } if (0) {
+       case WR_BITXOR: opname = "bitxor"; }
 	  bld->newline();
 	  assert(wrv[i].arith.w > 64);
 	  bld->appendFormat("extern struct internal_bit_%d %s_%d(struct internal_bit_%d, struct internal_bit_%d);\n",
@@ -1313,6 +1323,11 @@ static void gen_bitor(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  gen_bitop(WR_BITOR,bld,wr,"bitor","|");
 }
 
+static void gen_bitxor(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ gen_bitop(WR_BITXOR,bld,wr,"bitxor","^");
+}
+
 void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 {
  int i;
@@ -1373,6 +1388,9 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	  break;
        case WR_BITOR:
 	  gen_bitor(bld,&wrv[i]);
+	  break;
+       case WR_BITXOR:
+	  gen_bitxor(bld,&wrv[i]);
 	  break;
        default:
 	  abort();
