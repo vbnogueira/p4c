@@ -75,6 +75,10 @@ enum WRTYPE {
   WR_NOT,
   WR_SHL_X,
   WR_SHL_C,
+  WR_SHRA_X,
+  WR_SHRA_C,
+  WR_SHRL_X,
+  WR_SHRL_C,
   } ;
 
 class WIDTH_REC {
@@ -103,12 +107,12 @@ class WIDTH_REC {
 	int fw;
 	int tw;
 	} cast;
-      // if WR_SHL_X
+      // if WR_SHL_X, WR_SHRA_X, WR_SHRL_X
       struct {
 	int lw;
 	int rw;
 	} shift_x;
-      // if WR_SHL_C
+      // if WR_SHL_C, WR_SHRA_C, WR_SRL_C
       struct {
 	int lw;
 	unsigned int sv;
@@ -144,11 +148,15 @@ class WIDTH_REC {
 		       (l.cast.tw < r.cast.tw) ) );
 	     break;
 	  case WR_SHL_X:
+	  case WR_SHRA_X:
+	  case WR_SHRL_X:
 	     return( (l.shift_x.lw < r.shift_x.lw) ||
 		     ( (l.shift_x.lw == r.shift_x.lw) &&
 		       ( (l.shift_x.rw < r.shift_x.rw) ) ) );
 	     break;
 	  case WR_SHL_C:
+	  case WR_SHRA_C:
+	  case WR_SHRL_C:
 	     return( (l.shift_c.lw < r.shift_c.lw) ||
 		     ( (l.shift_c.lw == r.shift_c.lw) &&
 		       ( (l.shift_c.sv < r.shift_c.sv) ) ) );
@@ -179,9 +187,13 @@ class WIDTH_REC {
 	     return((l.cast.fw==r.cast.fw)&&(l.cast.tw==r.cast.tw));
 	     break;
 	  case WR_SHL_X:
+	  case WR_SHRA_X:
+	  case WR_SHRL_X:
 	     return((l.shift_x.lw==r.shift_x.lw)&&(l.shift_x.rw==r.shift_x.rw));
 	     break;
 	  case WR_SHL_C:
+	  case WR_SHRA_C:
+	  case WR_SHRL_C:
 	     return((l.shift_c.lw==r.shift_c.lw)&&(l.shift_c.sv==r.shift_c.sv));
 	     break;
 	}
@@ -220,6 +232,7 @@ class SCAN_WIDTHS : public Inspector {
     virtual bool preorder(const IR::Neg *) override;
     virtual bool preorder(const IR::Cmpl *) override;
     virtual bool preorder(const IR::Shl *) override;
+    virtual bool preorder(const IR::Shr *) override;
     bool arith_common_2(const IR::Operation_Binary *, WRTYPE, bool = true);
     bool arith_common_1(const IR::Operation_Unary *, WRTYPE, bool = true);
     profile_t init_apply(const IR::Node *) override;

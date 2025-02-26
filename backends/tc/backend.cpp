@@ -94,6 +94,18 @@ void SCAN_WIDTHS::dump() const
        case WR_SHL_C:
 	  std::cout << "SHL_C: " << wr->shift_c.lw << ' ' << wr->shift_c.sv;
 	  break;
+       case WR_SHRA_X:
+	  std::cout << "SHRA_X: " << wr->shift_x.lw << ' ' << wr->shift_x.rw;
+	  break;
+       case WR_SHRA_C:
+	  std::cout << "SHRA_C: " << wr->shift_c.lw << ' ' << wr->shift_c.sv;
+	  break;
+       case WR_SHRL_X:
+	  std::cout << "SHRL_X: " << wr->shift_x.lw << ' ' << wr->shift_x.rw;
+	  break;
+       case WR_SHRL_C:
+	  std::cout << "SHRL_C: " << wr->shift_c.lw << ' ' << wr->shift_c.sv;
+	  break;
        default:
 	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
 	  break;
@@ -251,6 +263,27 @@ bool SCAN_WIDTHS::preorder(const IR::Shl *e)
  return(true);
 }
 
+bool SCAN_WIDTHS::preorder(const IR::Shr *e)
+{
+ expr_common(e);
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt)
+  { auto rc = e->right->to<IR::Constant>();
+    if (rc)
+     { if (rc->value < lt->width_bits())
+	{ add_shift_c(lt->isSigned?WR_SHRA_C:WR_SHRL_C,lt->width_bits(),static_cast<unsigned int>(rc->value));
+	}
+     }
+    else
+     { auto rt = e->right->type->to<IR::Type_Bits>();
+       if (rt)
+	{ add_shift_x(lt->isSigned?WR_SHRA_X:WR_SHRL_X,lt->width_bits(),rt->width_bits());
+	}
+     }
+  }
+ return(true);
+}
+
 // There's _got_ to be a C++ standard object that can do this better.
 //  std::set maybe?  "_First_ make it work, _then_ make it better."
 void SCAN_WIDTHS::insert_wr(WIDTH_REC &wr)
@@ -379,6 +412,10 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
        case WR_NOT:
        case WR_SHL_X:
        case WR_SHL_C:
+       case WR_SHRA_X:
+       case WR_SHRA_C:
+       case WR_SHRL_X:
+       case WR_SHRL_C:
 	  break;
        default:
 	  abort();
@@ -461,6 +498,46 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  bld->append("extern ");
 	  append_type_for_width(bld,wrv[i].shift_c.lw);
 	  bld->appendFormat(" shl_%u_c_%u(",wrv[i].shift_c.lw,wrv[i].shift_c.sv);
+	  append_type_for_width(bld,wrv[i].shift_c.lw);
+	  bld->append(");\n");
+	  break;
+       case WR_SHRA_X:
+	  bld->newline();
+	  assert((wrv[i].shift_x.lw > 64) || (wrv[i].shift_x.rw > 64));
+	  bld->append("extern ");
+	  append_type_for_width(bld,wrv[i].shift_x.lw);
+	  bld->appendFormat(" shra_%u_x_%u(",wrv[i].shift_x.lw,wrv[i].shift_x.rw);
+	  append_type_for_width(bld,wrv[i].shift_x.lw);
+	  bld->append(", ");
+	  append_type_for_width(bld,wrv[i].shift_x.rw);
+	  bld->append(");\n");
+	  break;
+       case WR_SHRA_C:
+	  bld->newline();
+	  assert(wrv[i].shift_c.lw > 64);
+	  bld->append("extern ");
+	  append_type_for_width(bld,wrv[i].shift_c.lw);
+	  bld->appendFormat(" shra_%u_c_%u(",wrv[i].shift_c.lw,wrv[i].shift_c.sv);
+	  append_type_for_width(bld,wrv[i].shift_c.lw);
+	  bld->append(");\n");
+	  break;
+       case WR_SHRL_X:
+	  bld->newline();
+	  assert((wrv[i].shift_x.lw > 64) || (wrv[i].shift_x.rw > 64));
+	  bld->append("extern ");
+	  append_type_for_width(bld,wrv[i].shift_x.lw);
+	  bld->appendFormat(" shrl_%u_x_%u(",wrv[i].shift_x.lw,wrv[i].shift_x.rw);
+	  append_type_for_width(bld,wrv[i].shift_x.lw);
+	  bld->append(", ");
+	  append_type_for_width(bld,wrv[i].shift_x.rw);
+	  bld->append(");\n");
+	  break;
+       case WR_SHRL_C:
+	  bld->newline();
+	  assert(wrv[i].shift_c.lw > 64);
+	  bld->append("extern ");
+	  append_type_for_width(bld,wrv[i].shift_c.lw);
+	  bld->appendFormat(" shrl_%u_c_%u(",wrv[i].shift_c.lw,wrv[i].shift_c.sv);
 	  append_type_for_width(bld,wrv[i].shift_c.lw);
 	  bld->append(");\n");
 	  break;
@@ -892,6 +969,160 @@ static void gen_shl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(/*{*/"}\n");
 }
 
+static void gen_shra_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int lw;
+ unsigned int rw;
+ int i;
+ const char *pref;
+ const char *indent;
+ const char *shvar;
+ int s_set;
+
+ assert(wr->type == WR_SHRA_X);
+ lw = wr->shift_x.lw;
+ rw = wr->shift_x.rw;
+ assert((lw > 64) || (rw > 64));
+ bld->newline();
+ append_type_for_width(bld,lw);
+ bld->appendFormat(" shra_%u_x_%u(",lw,rw);
+ append_type_for_width(bld,lw);
+ bld->append(" v, ");
+ append_type_for_width(bld,rw);
+ bld->append(" sh)\n");
+ bld->append("{\n"/*}*/);
+ if (rw >= 64) bld->append(" unsigned int s;\n");
+ bld->append(" unsigned int i;\n");
+ if (lw >= 64) bld->appendFormat(" internal_bit_%u rv;\n",lw);
+ bld->append(" u16 a;\n");
+ bld->append(" unsigned int left;\n");
+ bld->append(" unsigned int o;\n");
+ bld->append("\n");
+ if (rw <= 64)
+  { bld->appendFormat(" if (sh >= %u) return(",lw);
+    if (lw <= 64)
+     { bld->appendFormat("((v->bits[%d]&%d)?0x%llx:0)",(lw-1)>>3,1<<((lw-1)&7),(lw==64)?0xffffffffffffffffULL:(1ULL<<lw)-1ULL);
+     }
+    else
+     { bld->appendFormat("((v->bits[%d]&%d)?(struct internal_bit_%u){"/*}*/,(lw-1)>>3,1<<((lw-1)&7),lw);
+       if (lw & 7)
+	{ bld->appendFormat("%d",(1U<<(lw&7))-1);
+	  pref = ",";
+	}
+       else
+	{ pref = "";
+	}
+       for (i=lw>>3;i>0;i--)
+	{ bld->appendFormat("%s255",pref);
+	  pref = ",";
+	}
+       bld->appendFormat(/*{*/"}:(struct internal_bit_%u){0})",lw);
+     }
+    bld->append(");\n");
+    indent = " ";
+    shvar = "sh";
+  }
+ else
+  { bld->append(" do\n");
+    indent = "  { "/*}*/;
+    if (rw & 7)
+     { bld->appendFormat("%ss = sh->bits[%d] & %d;\n",indent,rw>>3,(1<<(rw&7))-1);
+       indent = "    ";
+       if ((1U<<(rw&7))-1U >= lw) bld->appendFormat("    if (s >= %u) break;\n",lw);
+       s_set = 1;
+     }
+    else
+     { s_set = 0;
+     }
+    // rw >= 64, so this loop runs at least once
+    for (i=rw>>3;i>=0;i--)
+     { bld->appendFormat("%ss = %ssh->bits[%d]%s;\n",indent,s_set?"(s << 8) | (":"",i,s_set?")":"");
+       indent = "    ";
+       bld->appendFormat("    if (s >= %u) break;\n",lw);
+     }
+    shvar = "s";
+  }
+ // indent must be all spaces by this point
+ if (lw <= 64)
+  { bld->appendFormat("%sreturn((v&0x%llxLL)?(~((~v)>>%s))&0x%llxLL:(v>>%s));\n",
+		indent,1ULL<<(lw-1),shvar,(((1ULL<<(lw-1))-1ULL)<<1)|1ULL,shvar);
+  }
+ else
+  { bld->appendFormat("%sif (%u-%s >= %u)\n",indent,lw,shvar,(lw-1)&~7);
+    bld->appendFormat("%sXXX FINISH THIS;;;\n",indent);
+  }
+ bld->appendFormat("%sreturn(rv);\n",indent);
+ if (rw > 64)
+  { bld->append(/*{*/"  } while (0);\n");
+    bld->append(" return(");
+    if (lw <= 64)
+     { bld->append("0\n");
+     }
+    else
+     { bld->appendFormat("(struct internal_bit_%u){0}",lw);
+     }
+    bld->append(");\n");
+  }
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_shra_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int lw;
+ unsigned int sv;
+
+ assert(wr->type == WR_SHRA_C);
+ lw = wr->shift_c.lw;
+ sv = wr->shift_c.sv;
+ assert(lw > 64);
+ bld->newline();
+ append_type_for_width(bld,lw);
+ bld->appendFormat(" shra_%u_c_%u(",lw,sv);
+ append_type_for_width(bld,lw);
+ bld->append(" v)\n");
+ bld->append("{\n"/*}*/);
+ bld->append(" XXX WRITE THIS;;;\n");
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_shrl_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int lw;
+ unsigned int rw;
+
+ assert(wr->type == WR_SHRL_X);
+ lw = wr->shift_x.lw;
+ rw = wr->shift_x.rw;
+ assert(lw > 64);
+ bld->newline();
+ append_type_for_width(bld,lw);
+ bld->appendFormat(" shrl_%u_x_%u(",lw,rw);
+ append_type_for_width(bld,lw);
+ bld->append(" v)\n");
+ bld->append("{\n"/*}*/);
+ bld->append(" XXX WRITE THIS;;;\n");
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_shrl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int lw;
+ unsigned int sv;
+
+ assert(wr->type == WR_SHRL_C);
+ lw = wr->shift_c.lw;
+ sv = wr->shift_c.sv;
+ assert(lw > 64);
+ bld->newline();
+ append_type_for_width(bld,lw);
+ bld->appendFormat(" shrl_%u_c_%u(",lw,sv);
+ append_type_for_width(bld,lw);
+ bld->append(" v)\n");
+ bld->append("{\n"/*}*/);
+ bld->append(" XXX WRITE THIS;;;\n");
+ bld->append(/*{*/"}\n");
+}
+
 void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 {
  int i;
@@ -931,6 +1162,18 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	  break;
        case WR_SHL_C:
 	  gen_shl_c(bld,&wrv[i]);
+	  break;
+       case WR_SHRA_X:
+	  gen_shra_x(bld,&wrv[i]);
+	  break;
+       case WR_SHRA_C:
+	  gen_shra_c(bld,&wrv[i]);
+	  break;
+       case WR_SHRL_X:
+	  gen_shrl_x(bld,&wrv[i]);
+	  break;
+       case WR_SHRL_C:
+	  gen_shrl_c(bld,&wrv[i]);
 	  break;
        default:
 	  abort();

@@ -2956,4 +2956,45 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Shl *e)
  return(false);
 }
 
+bool ControlBodyTranslatorPNA::preorder(const IR::Shr *e)
+{
+ assert(e->type->is<IR::Type_Bits>());
+ auto lw = e->type->to<IR::Type_Bits>()->width_bits();
+ auto signc = e->type->to<IR::Type_Bits>()->isSigned ? 'a' : 'l';
+ auto ec = e->right->to<IR::Constant>();
+ if (ec)
+  { if (lw <= 64)
+     { // See inheritance comment above
+       return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
+     }
+    else if (ec->value < lw)
+     { builder->appendFormat("shr%c_%u_c_%u(",signc,lw,static_cast<unsigned int>(ec->value));
+       visit(e->left);
+       builder->append(")");
+     }
+    else
+     { builder->appendFormat("(struct internal_bit_%u){0}",lw);
+     }
+  }
+ else if (e->right->type->is<IR::Type_Bits>())
+  { auto rw = e->right->type->to<IR::Type_Bits>()->width_bits();
+    if ((lw <= 64) && (rw <= 64))
+     { // See inheritance comment above
+       return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
+     }
+    else
+     { builder->appendFormat("shr%c_%d_x_%d(",signc,lw,rw);
+       visit(e->left);
+       builder->append(",");
+       visit(e->right);
+       builder->append(")");
+     }
+  }
+ else
+  { // See inheritance comment above
+    return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
+  }
+ return(false);
+}
+
 }  // namespace P4::TC
