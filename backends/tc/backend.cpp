@@ -532,28 +532,11 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  append_type_for_width(bld,wrv[i].concat.rhsw);
 	  bld->append(");\n");
 	  break;
-       case WR_ADD:
-	  opname = "add";
-	  if (0)
-	   {
-       case WR_SUB:
-	     opname = "sub";
-	   }
-	  if (0)
-	   {
-       case WR_MUL:
-	     opname = "mul";
-	   }
-	  if (0)
-	   {
-       case WR_BITAND:
-	     opname = "bitand";
-	   }
-	  if (0)
-	   {
-       case WR_BITOR:
-	     opname = "bitor";
-	   }
+       case WR_ADD:    opname = "add";      if (0) {
+       case WR_SUB:    opname = "sub";    } if (0) {
+       case WR_MUL:    opname = "mul";    } if (0) {
+       case WR_BITAND: opname = "bitand"; } if (0) {
+       case WR_BITOR:  opname = "bitor";  }
 	  bld->newline();
 	  assert(wrv[i].arith.w > 64);
 	  bld->appendFormat("extern struct internal_bit_%d %s_%d(struct internal_bit_%d, struct internal_bit_%d);\n",
