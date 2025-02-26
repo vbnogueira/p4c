@@ -824,7 +824,7 @@ static void gen_shl_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
   { bld->append(/*{*/"  } while (0);\n");
     bld->append(" return(");
     if (lw <= 64)
-     { bld->append("0\n");
+     { bld->append("0");
      }
     else
      { bld->appendFormat("(struct internal_bit_%u){0}",lw);
