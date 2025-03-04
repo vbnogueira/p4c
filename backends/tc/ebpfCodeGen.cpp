@@ -2804,6 +2804,27 @@ bool ControlBodyTranslatorPNA::arith_common(const IR::Operation_Binary *e, const
  return(false);
 }
 
+bool ControlBodyTranslatorPNA::sarith_common(const IR::Operation_Binary *e, const char *op)
+{
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt)
+  { auto rt = e->right->type->to<IR::Type_Bits>();
+    if (rt)
+     { auto lbits = lt->width_bits();
+       auto rbits = rt->width_bits();
+       assert((lbits==rbits)&&(lt->isSigned==rt->isSigned));
+       builder->appendFormat("%s_%u(",op,lbits);
+       visit_hostorder(e->left);
+       builder->append(", ");
+       visit_hostorder(e->right);
+       builder->append(")");
+       return(false);
+     }
+  }
+ builder->appendFormat("<<Mystery %s %s %s>>",op,e->left->type->toString(),e->right->type->toString());
+ return(false);
+}
+
 bool ControlBodyTranslatorPNA::big_x_small_mul(const IR::Expression *big, const IR::Constant *small)
 {
  assert(big->type->is<IR::Type_Bits>());
@@ -3103,6 +3124,16 @@ bool ControlBodyTranslatorPNA::preorder(const IR::BOr *e)
 bool ControlBodyTranslatorPNA::preorder(const IR::BXor *e)
 {
  return(arith_common(e,"^","bitxor"));
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::AddSat *e)
+{
+ return(sarith_common(e,"addsat"));
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::SubSat *e)
+{
+ return(sarith_common(e,"subsat"));
 }
 
 }  // namespace P4::TC

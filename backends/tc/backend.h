@@ -83,6 +83,8 @@ enum WRTYPE {
   WR_BITAND,
   WR_BITOR,
   WR_BITXOR,
+  WR_ADDSAT,
+  WR_SUBSAT,
   } ;
 
 class WIDTH_REC {
@@ -135,6 +137,11 @@ class WIDTH_REC {
 #define CMP_BASE 0x07
 #define CMP_SIGNED 0x08
 	} cmp;
+      // if WR_ADDSAT, WR_SUBSAT
+      struct {
+	int w;
+	bool issigned;
+	} sarith;
       } ;
   public:
     friend bool operator<(const WIDTH_REC &l, const WIDTH_REC &r)
@@ -156,7 +163,7 @@ class WIDTH_REC {
 	  case WR_BITAND:
 	  case WR_BITOR:
 	  case WR_BITXOR:
-	     return(l.arith.w<r.arith.w);
+	     return(l.arith.w < r.arith.w);
 	     break;
 	  case WR_BXSMUL:
 	     return( (l.bxsmul.bw < r.bxsmul.bw) ||
@@ -186,6 +193,13 @@ class WIDTH_REC {
 	     return( (l.cmp.w < r.cmp.w) ||
 		     ( (l.cmp.w == r.cmp.w) &&
 		       (l.cmp.cmp < r.cmp.cmp) ) );
+	     break;
+	  case WR_ADDSAT:
+	  case WR_SUBSAT:
+	     return( (l.sarith.w < r.sarith.w) ||
+		     ( (l.sarith.w == r.sarith.w) &&
+		       (!l.sarith.issigned && r.sarith.issigned) ) );
+	     break;
 	}
        return(0);
      }
@@ -227,6 +241,10 @@ class WIDTH_REC {
 	  case WR_CMP:
 	     return((l.cmp.w==r.cmp.w)&&(l.cmp.cmp==r.cmp.cmp));
 	     break;
+	  case WR_ADDSAT:
+	  case WR_SUBSAT:
+	     return((l.sarith.w==r.sarith.w)&&(l.sarith.issigned==r.sarith.issigned));
+	     break;
 	}
        return(1);
      }
@@ -245,6 +263,7 @@ class SCAN_WIDTHS : public Inspector {
     void add_width(int);
     void add_concat(int, int);
     void add_arith(WRTYPE, int);
+    void add_sarith(WRTYPE, int, bool);
     void add_bxsmul(int, unsigned int);
     void add_cast(unsigned int, unsigned int);
     bool big_x_small_mul(const IR::Expression *, const IR::Constant *);
@@ -274,8 +293,11 @@ class SCAN_WIDTHS : public Inspector {
     virtual bool preorder(const IR::BAnd *) override;
     virtual bool preorder(const IR::BOr *) override;
     virtual bool preorder(const IR::BXor *) override;
+    virtual bool preorder(const IR::AddSat *) override;
+    virtual bool preorder(const IR::SubSat *) override;
     bool arith_common_2(const IR::Operation_Binary *, WRTYPE, bool = true);
     bool arith_common_1(const IR::Operation_Unary *, WRTYPE, bool = true);
+    bool sarith_common_2(const IR::Operation_Binary *, WRTYPE, bool = true);
     profile_t init_apply(const IR::Node *) override;
     void end_apply(const IR::Node *) override;
     void revisit_visited();

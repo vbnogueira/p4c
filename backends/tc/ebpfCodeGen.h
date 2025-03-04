@@ -404,6 +404,7 @@ class ControlBodyTranslatorPNA : public EBPF::ControlBodyTranslator {
     const IR::P4Action *GetAddOnMissHitAction(cstring actionName);
     void ValidateAddOnMissMissAction(const IR::P4Action *act);
     bool arith_common(const IR::Operation_Binary *, const char *, const char *);
+    bool sarith_common(const IR::Operation_Binary *, const char *);
     bool preorder(const IR::Concat *) override;
     bool preorder(const IR::Add *) override;
     bool preorder(const IR::Sub *) override;
@@ -422,6 +423,8 @@ class ControlBodyTranslatorPNA : public EBPF::ControlBodyTranslator {
     bool preorder(const IR::BAnd *) override;
     bool preorder(const IR::BOr *) override;
     bool preorder(const IR::BXor *) override;
+    bool preorder(const IR::AddSat *) override;
+    bool preorder(const IR::SubSat *) override;
     bool big_x_small_mul(const IR::Expression *, const IR::Constant *);
 };
 

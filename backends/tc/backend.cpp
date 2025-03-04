@@ -133,6 +133,12 @@ void SCAN_WIDTHS::dump() const
        case WR_BITXOR:
 	  std::cout << "BITXOR: " << wr->arith.w;
 	  break;
+       case WR_ADDSAT:
+	  std::cout << "ADDSAT: " << wr->arith.w;
+	  break;
+       case WR_SUBSAT:
+	  std::cout << "SUBSAT: " << wr->arith.w;
+	  break;
        default:
 	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
 	  break;
@@ -214,6 +220,19 @@ bool SCAN_WIDTHS::big_x_small_mul(const IR::Expression *big, const IR::Constant 
 {
  auto bt = big->type->to<IR::Type_Bits>();
  if (bt) add_bxsmul(bt->width_bits(),static_cast<unsigned int>(small->value));
+ return(true);
+}
+
+bool SCAN_WIDTHS::sarith_common_2(const IR::Operation_Binary *e, WRTYPE t, bool docommon)
+{
+ if (docommon) expr_common(e);
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt)
+  { auto rt = e->right->type->to<IR::Type_Bits>();
+    if (rt && (lt->width_bits() == rt->width_bits()))
+     { add_sarith(t,lt->width_bits(),lt->isSigned);
+     }
+  }
  return(true);
 }
 
@@ -374,6 +393,16 @@ bool SCAN_WIDTHS::preorder(const IR::BXor *e)
  return(arith_common_2(e,WR_BITXOR));
 }
 
+bool SCAN_WIDTHS::preorder(const IR::AddSat *e)
+{
+ return(sarith_common_2(e,WR_ADDSAT));
+}
+
+bool SCAN_WIDTHS::preorder(const IR::SubSat *e)
+{
+ return(sarith_common_2(e,WR_SUBSAT));
+}
+
 // There's _got_ to be a C++ standard object that can do this better.
 //  std::set maybe?  "_First_ make it work, _then_ make it better."
 void SCAN_WIDTHS::insert_wr(WIDTH_REC &wr)
@@ -488,6 +517,17 @@ void SCAN_WIDTHS::add_cmp(unsigned int w, unsigned char c)
  insert_wr(wr);
 }
 
+void SCAN_WIDTHS::add_sarith(WRTYPE t, int w, bool sgn)
+{
+ WIDTH_REC wr;
+
+ assert((w>0)&&(w<1048576));
+ wr.type = t;
+ wr.sarith.w = w;
+ wr.sarith.issigned = sgn;
+ insert_wr(wr);
+}
+
 void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 {
  int i;
@@ -521,6 +561,8 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
        case WR_BITAND:
        case WR_BITOR:
        case WR_BITXOR:
+       case WR_ADDSAT:
+       case WR_SUBSAT:
 	  break;
        default:
 	  abort();
@@ -551,6 +593,21 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  assert(wrv[i].arith.w > 64);
 	  bld->appendFormat("extern struct internal_bit_%d %s_%d(struct internal_bit_%d, struct internal_bit_%d);\n",
 		wrv[i].arith.w, opname, wrv[i].arith.w, wrv[i].arith.w, wrv[i].arith.w);
+	  break;
+       case WR_ADDSAT: opname = "addsat";   if (0) {
+       case WR_SUBSAT: opname = "subsat"; }
+	  /*
+	   * ADDSAT and SUBSAT are different because there's no C
+	   *  operator to fall back on for small sizes.
+	   */
+	  bld->newline();
+	  bld->append("extern ");
+	  append_type_for_width(bld,wrv[i].arith.w);
+	  bld->appendFormat(" %s_%d(",opname,wrv[i].arith.w);
+	  append_type_for_width(bld,wrv[i].arith.w);
+	  bld->append(", ");
+	  append_type_for_width(bld,wrv[i].arith.w);
+	  bld->append(");\n");
 	  break;
        case WR_NEG:
 	  opname = "neg";
@@ -713,6 +770,7 @@ static void gen_add(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
  // really need only u9, but can't count on that existing, ugh
+ // (for that matter, can count on u16 existing only pragmatically)
  bld->append(" u16 a;\n");
  bld->append("\n");
  for (i=0;i<b;i++)
@@ -739,7 +797,7 @@ static void gen_sub(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
  // really need only u9, but can't count on that existing, ugh
- // (tho, in theory, can't count on u16 existing either)
+ // (for that matter, can count on u16 existing only pragmatically)
  bld->append(" u16 a;\n");
  bld->append("\n");
  for (i=0;i<b;i++)
@@ -1328,6 +1386,177 @@ static void gen_bitxor(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  gen_bitop(WR_BITXOR,bld,wr,"bitxor","^");
 }
 
+/*
+ * Signed addition overflows exactly when the arguments have the same
+ *  sign but the (overflow-ignored) result has a different sign,
+ *  implemented here as ~(lhs^rhs) & (ret^lhs) & signbit.
+ *
+ * Unsigned addition overflows exactly when there is a carry out of the
+ *  high bit; equivalently, if the (overflow-ignored) result is less
+ *  than at least one of the input operands.
+ */
+static void gen_addsat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int w;
+ int b;
+ int i;
+
+ assert(wr->type == WR_ADDSAT);
+ w = wr->sarith.w;
+ b = (w + 7) >> 3;
+ bld->newline();
+ append_type_for_width(bld,w);
+ bld->appendFormat(" addsat_%d(",w);
+ append_type_for_width(bld,w);
+ bld->append(" lhs, ");
+ append_type_for_width(bld,w);
+ bld->append(" rhs)\n");
+ bld->append("{\n"/*}*/);
+ bld->append(" ");
+ append_type_for_width(bld,w);
+ bld->append(" ret;\n");
+ bld->append("\n");
+ if (w <= 64)
+  { unsigned long long int max;
+    max = (w < 64) ? (1ULL << w) - 1ULL : 0xffffffffffffffffULL;
+    // let the optimizer delete the &0x...ULL when appropriate
+    bld->appendFormat(" ret = (lhs + rhs) & 0x%llxULL;\n",max);
+    if (wr->sarith.issigned)
+     { bld->appendFormat(" if (~(lhs ^ rhs) & (ret ^ lhs) & (1ULL << %u)) ret = (lhs & (1ULL << %u)) ? 0x%llxULL : 0x%llxULL;\n",
+		w-1, w-1, max&~(max>>1), max);
+     }
+    else
+     { bld->appendFormat(" if ((ret < lhs) || (ret < rhs)) ret = 0x%llxULL;\n",max);
+     }
+  }
+ else
+  { // really need only u9, but can't count on that existing, ugh
+    // (for that matter, can count on u16 existing only pragmatically)
+    bld->append(" u16 a;\n");
+    bld->append("\n");
+    for (i=0;i<b;i++)
+     { bld->appendFormat(" a = lhs->bits[%d] + rhs->bits[%d]%s;\n",i,i,i?" + (a >> 8)":"");
+       bld->appendFormat(" ret.bits[%d] = a & ",i);
+       if (i+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-w));
+       bld->append(";\n");
+     }
+    if (wr->sarith.issigned)
+     { unsigned int signbit;
+       signbit = 128U >> ((b * 8) - w);
+       bld->appendFormat(" if (~(lhs.bits[%u] ^ rhs.bits[%u]) & (a ^ lhs.bits[%u]) & %u)\n",b-1,b-1,b-1,signbit);
+       bld->appendFormat("  { if (lhs.bits[%u] & %u)\n"/*}*/,b-1,signbit);
+       bld->appendFormat("     { __builtin_memset(&ret.bits[0],0,%u);\n"/*}*/,b-1);
+       bld->appendFormat("       ret.bits[%u] = %u;\n",b-1,signbit);
+       bld->append(/*{*/"     }\n");
+       bld->append("    else\n");
+       if (w % 8)
+	{ bld->appendFormat("     { __builtin_memset(&ret.bits[0],255,%u);\n"/*}*/,b-1);
+	  bld->appendFormat("       ret.bits[%u] = %u;\n",b-1,signbit-1);
+	  bld->append(/*{*/"     }\n");
+	}
+       else
+	{ bld->appendFormat("     { __builtin_memset(&ret.bits[0],255,%u);\n"/*}*/,b);
+	  bld->append(/*{*/"     }\n");
+	}
+       bld->append(/*{*/"  }\n");
+     }
+    else
+     { bld->appendFormat(" if (a > %d)",255>>((b*8)-w));
+       // we know w > 64, and thus b > 1, at this point
+       if (w % 8)
+	{ bld->append("\n");
+	  bld->appendFormat("  { __builtin_memset(&ret.bits[0],255,%u);\n"/*}*/,b-1);
+	  bld->appendFormat("    ret.bits[%u] = %u;\n",b-1,255>>((b*8)-w));
+	  bld->append(/*{*/"  }\n");
+	}
+       else
+	{ bld->appendFormat(" __builtin_memset(&ret.bits[0],255,%u);\n",b);
+	}
+     }
+  }
+ bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
+/*
+ * Signed subtraction overflows exactly when the arguments have
+ *  different signs and the result's sign equals the RHS's sign,
+ *  implemented here as (lhs^rhs) & ~(ret^rhs) & signbit.
+ *
+ * Unsigned subtraction overflows exactly when the RHS is greater than
+ *  the LHS.  For non-multioctet operations, this is easy to test.  We
+ *  implement multioctet unsigned subtraction as unsigned addition with
+ *  the RHS complemented and a carry-in of 1 into the low byte; the
+ *  subtraction then overflows exactly when there is *no* carry out of
+ *  the top bit.
+ */
+static void gen_subsat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int w;
+ int b;
+ int i;
+
+ assert(wr->type == WR_SUBSAT);
+ w = wr->sarith.w;
+ b = (w + 7) >> 3;
+ bld->newline();
+ append_type_for_width(bld,w);
+ bld->appendFormat(" subsat_%d(",w);
+ append_type_for_width(bld,w);
+ bld->append(" lhs, ");
+ append_type_for_width(bld,w);
+ bld->append(" rhs)\n");
+ bld->append("{\n"/*}*/);
+ bld->append(" ");
+ append_type_for_width(bld,w);
+ bld->append(" ret;\n");
+ bld->append("\n");
+ if (w <= 64)
+  { unsigned long long int max;
+    max = (w < 64) ? (1ULL << w) - 1ULL : 0xffffffffffffffffULL;
+    if (wr->sarith.issigned)
+     { // let the optimizer delete the &0x...ULL when appropriate
+       bld->appendFormat(" ret = (lhs - rhs) & 0x%llxULL;\n",max);
+       bld->appendFormat(" if ((lhs ^ rhs) & ~(ret ^ rhs) & (1ULL << %u)) ret = (ret & (1ULL << %u)) ? 0x%llxULL : 0x%llxULL;\n",
+		w-1, w-1, max, max&~(max>>1));
+     }
+    else
+     { bld->appendFormat(" ret = (rhs > lhs) ? 0 : lhs - rhs;\n",max);
+     }
+  }
+ else
+  { unsigned int signbit;
+    signbit = 128U >> ((b * 8) - w);
+    // really need only u9, but can't count on that existing, ugh
+    // (for that matter, can count on u16 existing only pragmatically)
+    bld->append(" u16 a;\n");
+    bld->append("\n");
+    for (i=0;i<b;i++)
+     { bld->appendFormat(" a = lhs->bits[%d] + ~rhs->bits[%d] + %s;\n",i,i,i?"(a >> 8)":"1");
+       bld->appendFormat(" ret.bits[%d] = a & ",i);
+       if (i+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-w));
+       bld->append(";\n");
+     }
+    if (wr->sarith.issigned)
+     { bld->appendFormat(" if ((lhs.bits[%u] ^ rhs.bits[%u]) & ~(a ^ rhs.bits[%u]) & %u)\n",b-1,b-1,b-1,signbit);
+       bld->appendFormat("  { if (a & %u)\n"/*}*/,signbit);
+       bld->appendFormat("     { __builtin_memset(&ret.bits[0],255,%u);\n"/*}*/,b-1);
+       bld->appendFormat("       ret.bits[%u] = %u;\n",b-1,signbit-1);
+       bld->append(/*{*/"     }\n");
+       bld->append("    else\n");
+       bld->appendFormat("     { __builtin_memset(&ret.bits[0],0,%u);\n"/*}*/,b-1);
+       bld->appendFormat("       ret.bits[%u] = %u;\n",b-1,signbit);
+       bld->append(/*{*/"     }\n");
+       bld->append(/*{*/"  }\n");
+     }
+    else
+     { bld->appendFormat(" if (a <= %u) __builtin_memset(&ret.bits[0],0,%u);\n",signbit|(signbit-1),b);
+     }
+  }
+ bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
 void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 {
  int i;
@@ -1391,6 +1620,12 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	  break;
        case WR_BITXOR:
 	  gen_bitxor(bld,&wrv[i]);
+	  break;
+       case WR_ADDSAT:
+	  gen_addsat(bld,&wrv[i]);
+	  break;
+       case WR_SUBSAT:
+	  gen_subsat(bld,&wrv[i]);
 	  break;
        default:
 	  abort();
