@@ -56,6 +56,7 @@ void emitFilterModel(const EbpfOptions &options, Target *target, const IR::Tople
 
 void run_ebpf_backend(const EbpfOptions &options, const IR::ToplevelBlock *toplevel,
                       P4::ReferenceMap *refMap, P4::TypeMap *typeMap) {
+std::cerr << "run_ebpf_backend running" << std::endl;
     if (toplevel == nullptr) return;
 
     auto main = toplevel->getMain();

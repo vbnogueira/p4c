@@ -86,7 +86,7 @@ DoExpandLookahead::ExpansionInfo *DoExpandLookahead::convertLookahead(
     if (width < 0) return nullptr;
 
     auto bittype = IR::Type_Bits::get(width);
-    auto name = nameGen.newName("tmp");
+    auto name = nameGen.newName("tmpAP");
     auto decl = new IR::Declaration_Variable(IR::ID(name), bittype, nullptr);
     newDecls.push_back(decl);
 
