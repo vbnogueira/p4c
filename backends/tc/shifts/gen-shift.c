@@ -57,7 +57,11 @@
  *  example, this program writes bld->newline() instead of the
  *  (*bld->newline)() I would normally use in C: it is trying to look
  *  like the C++ code in the P4 transpiler.  Similarly to the P4
- *  transpiler is also why the WIDTH_REC type exists here.
+ *  transpiler is also why the WIDTH_REC type exists here.  With these
+ *  done, moving the shift generation code into the P4 transpiler needs
+ *  only changing BUILDER to EBPF::CodeBuilder.  (This could even be
+ *  done with a #define, in which case _no_ textual changes are
+ *  needed.)
  *
  * This program can be run with no arguments, in which case it behaves
  *  as described above.  It can also take three arguments, which are a

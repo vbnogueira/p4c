@@ -984,99 +984,6 @@ static void gen_not(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(/*{*/"}\n");
 }
 
-static void gen_shl_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
-{
- unsigned int lw;
- unsigned int rw;
- const char *indent;
- const char *shvar;
- int i;
- int s_set;
-
- assert(wr->type == WR_SHL_X);
- lw = wr->shift_x.lw;
- rw = wr->shift_x.rw;
- assert((lw > 64) || (rw > 64));
- bld->newline();
- append_type_for_width(bld,lw);
- bld->appendFormat(" shl_%u_x_%u(",lw,rw);
- append_type_for_width(bld,lw);
- bld->append(" v, ");
- append_type_for_width(bld,rw);
- bld->append(" sh)\n");
- bld->append("{\n"/*}*/);
- if (rw >= 64) bld->append(" unsigned int s;\n");
- bld->append(" unsigned int i;\n");
- if (lw >= 64) bld->appendFormat(" internal_bit_%u rv;\n",lw);
- bld->append(" u16 a;\n");
- bld->append(" unsigned int left;\n");
- bld->append(" unsigned int o;\n");
- bld->append("\n");
- if (rw <= 64)
-  { bld->appendFormat(" if (sh >= %u) return(",lw);
-    if (lw <= 64)
-     { bld->append("0\n");
-     }
-    else
-     { bld->appendFormat("(struct internal_bit_%u){0}",lw);
-     }
-    bld->append(");\n");
-    indent = " ";
-    shvar = "sh";
-  }
- else
-  { bld->append(" do\n");
-    indent = "  { "/*}*/;
-    if (rw & 7)
-     { bld->appendFormat("%ss = sh->bits[%d] & %d;\n",indent,rw>>3,(1<<(rw&7))-1);
-       indent = "    ";
-       if ((1U<<(rw&7))-1U >= lw) bld->appendFormat("    if (s >= %u) break;\n",lw);
-       s_set = 1;
-     }
-    else
-     { s_set = 0;
-     }
-    // rw >= 64, so this loop runs at least once
-    for (i=rw>>3;i>=0;i--)
-     { bld->appendFormat("%ss = %ssh->bits[%d]%s;\n",indent,s_set?"(s << 8) | (":"",i,s_set?")":"");
-       indent = "    ";
-       bld->appendFormat("    if (s >= %u) break;\n",lw);
-     }
-    shvar = "s";
-  }
- // indent must be all spaces by this point
- if (lw <= 64)
-  { bld->appendFormat("%sreturn(v<<%s);\n",indent,shvar);
-  }
- else
-  { bld->appendFormat("%sfor (o=0;%s>=8;o++,%s-=8) rv->bits[o] = 0;\n",indent,shvar,shvar);
-    bld->appendFormat("%sa = 0;\n",indent);
-    bld->appendFormat("%sleft = %u - %s;\n",indent,lw,shvar);
-    bld->appendFormat("%si = 0;\n",indent);
-    bld->appendFormat("%sfor (;left>=8;left-=8)\n",indent);
-    bld->appendFormat("%s { a = (a >> 8) | (v->bits[i++] << %s);\n"/*}*/,indent,shvar);
-    bld->appendFormat("%s   rv->bits[o++] = a & 255;\n",indent);
-    bld->appendFormat(/*{*/"%s }\n",indent);
-    bld->appendFormat("%sif (left)\n",indent);
-    bld->appendFormat("%s { a = (a >> 8) | (v->bits[i++] << %s);\n"/*}*/,indent,shvar);
-    bld->appendFormat("%s   rv->bits[o++] = a & ((1U << left) - 1);\n",indent);
-    bld->appendFormat(/*{*/"%s }\n",indent);
-  }
- bld->appendFormat("%sreturn(rv);\n",indent);
- if (rw > 64)
-  { bld->append(/*{*/"  } while (0);\n");
-    bld->append(" return(");
-    if (lw <= 64)
-     { bld->append("0");
-     }
-    else
-     { bld->appendFormat("(struct internal_bit_%u){0}",lw);
-     }
-    bld->append(");\n");
-  }
- bld->append(/*{*/"}\n");
-}
-
 static void gen_shl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
 {
  unsigned int lw;
@@ -1103,11 +1010,11 @@ static void gen_shl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
     bld->append(" return(v);\n");
   }
  else
-  { bld->appendFormat(" internal_bit_%u rv;\n",lw);
+  { bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
     o = sv >> 3;
     sv &= 7;
     if (sv) bld->append(" u16 a;\n");
-    bld->append("\n");
+    bld->newline();
     if (o) bld->appendFormat(" __builtin_memset(&rv.bits[0],0,%u);\n",o);
     if (sv)
      { pref = "";
@@ -1117,21 +1024,415 @@ static void gen_shl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
        i = 0;
        nb = lw >> 3;
        for (;o<nb;o++,i++)
-	{ bld->appendFormat(" a = %sv->bits[%u] << %u%s;\n",pref,i,sv,suff);
+	{ bld->appendFormat(" a = %sv.bits[%u] << %u%s;\n",pref,i,sv,suff);
 	  pref = "(a >> 8) | (";
 	  suff = ")";
 	  bld->appendFormat(" rv.bits[%u] = a & 255;\n",o);
 	}
        if (lw & 7)
-	{ bld->appendFormat(" a = %sv->bits[%u] << %u%s;\n",pref,i,sv,suff);
-	  bld->appendFormat(" rv.bits[%u] = a & %u\n",o,(1U<<(lw&7))-1U);
+	{ bld->appendFormat(" a = %sv.bits[%u] << %u%s;\n",pref,i,sv,suff);
+	  bld->appendFormat(" rv.bits[%u] = a & %u;\n",o,(1U<<(lw&7))-1U);
 	}
      }
     else
      { bld->appendFormat(" __builtin_memcpy(&rv.bits[%u],&v.bits[0],%u);\n",o,(lw>>3)-o);
        if (lw & 7) bld->appendFormat(" rv.bits[%u] = v.bits[%u] & %u;\n",lw>>3,(lw>>3)-o,(1U<<(lw&7))-1U);
      }
+    bld->append(" return(rv);\n");
   }
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_shrl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int lw;
+ unsigned int sv;
+ int i;
+ int j;
+ int s;
+
+ assert(wr->type == WR_SHRL_C);
+ lw = wr->shift_c.lw;
+ sv = wr->shift_c.sv;
+ assert(lw > 64);
+ bld->newline();
+ append_type_for_width(bld,lw);
+ bld->appendFormat(" shrl_%u_c_%u(",lw,sv);
+ append_type_for_width(bld,lw);
+ bld->append(" v)\n");
+ bld->append("{\n"/*}*/);
+ if (sv == 0)
+  { /*
+     * Can this even happen?  Shifting by a zero constant is the kind
+     *	of thing I'd expect to get optimized away in an MI way.  But
+     *	it's easy to DTRT here....
+     */
+    bld->append(" return(v);\n");
+  }
+ else
+  { bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
+    if (sv >= (lw & ~7U))
+     { // No bits survive from anything below the top byte of v
+       bld->newline();
+       bld->appendFormat(" __builtin_memset(&rv.bits[1],0,%u);\n",(lw-1)>>3);
+       if (sv == (lw & ~7U))
+	{ bld->appendFormat(" rv.bits[0] = v.bits[%u]",(lw-1)>>3);
+	  if (lw & 7) bld->appendFormat(" & %u",(1U<<(lw&7))-1);
+	  bld->append(";\n");
+	}
+       else if (lw & 7)
+	{ bld->appendFormat(" rv.bits[0] = (v.bits[%u] & %u) >> %u;\n",(lw-1)>>3,(1U<<(lw&7))-1U,sv-(lw&~7U));
+	}
+       else
+	{ bld->appendFormat(" rv.bits[0] = v.bits[%u] >> %u;\n",(lw-1)>>3,sv-(lw&~7U));
+	}
+     }
+    else if (! (sv & 7))
+     { if (lw & 7)
+	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[0],&v.bits[%u],%u);\n",sv>>3,(lw-sv)>>3);
+	  bld->appendFormat(" rv.bits[%u] = v.bits[%u] & %u;\n",(lw-sv)>>3,lw>>3,(1U<<(lw&7))-1U);
+	  bld->appendFormat(" __builtin_memset(&rv.bits[%u],0,%u);\n",((lw-sv)>>3)+1,sv>>3);
+	}
+       else
+	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[0],&v.bits[%u],%u);\n",sv>>3,(lw-sv)>>3);
+	  bld->appendFormat(" __builtin_memset(&rv.bits[%u],0,%u);\n",(lw-sv)>>3,sv>>3);
+	}
+     }
+    else
+     { bld->append(" u32 a;\n");
+       bld->newline();
+       bld->append(" a = ");
+       if (lw & 7) bld->appendFormat("v.bits[%u] & %u",lw>>3,(1U<<(lw&7))-1); else bld->appendFormat("v.bits[%u]",(lw>>3)-1);
+       bld->append(";\n");
+       s = 8 + ((lw - 1) & 7) - ((lw - 1 - sv) & 7);
+       j = (lw - 9) >> 3;
+       i = (lw - 1 - sv) >> 3;
+       if (i < (int)((lw-1)>>3)) bld->appendFormat(" __builtin_memset(&rv.bits[%u],0,%u);\n",i+1,((lw+7)>>3)-(i+1));
+       for (i=(lw-1-sv)>>3;i>0;i--,j--)
+	{ bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",j);
+	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & 255;\n",i,s);
+	}
+       if (s == 8)
+	{ bld->appendFormat(" rv.bits[%u] = a & 255;\n",i);
+	}
+       else if (s > 8)
+	{ bld->appendFormat(" rv.bits[%u] = (a >> %u) & 255;\n",i,s-8);
+	}
+       else
+	{ bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",j);
+	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & 255;\n",i,s);
+	}
+     }
+    bld->append(" return(rv);\n");
+  }
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_shra_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int lw;
+ unsigned int sv;
+ int i;
+ int j;
+ int s;
+ unsigned int m;
+
+ assert(wr->type == WR_SHRA_C);
+ lw = wr->shift_c.lw;
+ sv = wr->shift_c.sv;
+ assert(lw > 64);
+ bld->newline();
+ append_type_for_width(bld,lw);
+ bld->appendFormat(" shra_%u_c_%u(",lw,sv);
+ append_type_for_width(bld,lw);
+ bld->append(" v)\n");
+ bld->append("{\n"/*}*/);
+ if (sv == 0)
+  { /*
+     * Can this even happen?  Shifting by a zero constant is the kind
+     *	of thing I'd expect to get optimized away in an MI way.  But
+     *	it's easy to DTRT here....
+     */
+    bld->append(" return(v);\n");
+  }
+ else
+  { bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
+    if (sv >= (lw & ~7U))
+     { // No bits survive from anything below the top byte of v
+       bld->newline();
+       if (sv == lw-1)
+	{ // All bits copies of sign bit
+	  if (lw & 7)
+	   { bld->appendFormat(" __builtin_memset(&rv.bits[0],(v.bits[%u]&%u)?255:0,%u);\n",lw>>3,1U<<((lw-1)&7),lw>>3);
+	     bld->appendFormat(" rv.bits[%u] = (v.bits[%u] & %u) ? %u : 0;\n",lw>>3,lw>>3,1U<<((lw-1)&7),(1U<<(lw&7))-1U);
+	   }
+	  else
+	   { bld->appendFormat(" __builtin_memset(&rv.bits[0],(v.bits[%u]&%u)?255:0,%u);\n",(lw>>3)-1,1U<<((lw-1)&7),lw>>3);
+	   }
+	}
+       else
+	{ if (lw & 7)
+	   { bld->appendFormat(" if (v.bits[%u] & %u)\n",(lw-1)>>3,1U<<((lw-1)&7));
+	     bld->appendFormat("  { __builtin_memset(&rv.bits[1],255,%u);\n"/*}*/,(lw>>3)-1);
+	     bld->appendFormat("    rv.bits[%u] = %u;\n",(lw-1)>>3,(1U<<(lw&7))-1U);
+	     bld->append(/*{*/"  }\n");
+	     bld->append(" else\n");
+	     bld->appendFormat("  { __builtin_memset(&rv.bits[1],0,%u);\n"/*}*/,lw>>3);
+	     bld->append(/*{*/"  }\n");
+	   }
+	  else
+	   { bld->appendFormat(" __builtin_memset(&rv.bits[1],(v.bits[%u]&128)?255:0,%u);\n",(lw-1)>>3,(lw-9)>>3);
+	   }
+	  bld->append(" rv.bits[0] = (");
+	  if (sv == (lw & ~7U))
+	   { bld->appendFormat("v.bits[%u]",(lw-1)>>3);
+	     if (lw & 7) bld->appendFormat(" & %u",(1U<<(lw&7))-1);
+	   }
+	  else if (lw & 7)
+	   { bld->appendFormat("(v.bits[%u] & %u) >> %u",(lw-1)>>3,(1U<<(lw&7))-1U,sv-(lw&~7U));
+	   }
+	  else
+	   { bld->appendFormat("v.bits[%u] >> %u",(lw-1)>>3,sv-(lw&~7U));
+	   }
+	  bld->appendFormat(") | ((v.bits[%u] & %u) ? %u : 0);\n",(lw-1)>>3,1U<<((lw-1)&7),(255U<<((lw-(sv&7))&7))&255U);
+	}
+     }
+    else if (! (sv & 7))
+     { bld->newline();
+       if (lw & 7)
+	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[0],&v.bits[%u],%u);\n",sv>>3,(lw+8-sv)>>3);
+	  bld->appendFormat(" rv.bits[%u] |= (v.bits[%u] & %u) ? %u : 0;\n",(lw-sv)>>3,lw>>3,1U<<((lw-1)&7),(255U<<(lw&7))&255U);
+	  if ((sv >> 3) > 1) bld->appendFormat(" __builtin_memset(&rv.bits[%u],(v.bits[%u]&%u)?255:0,%u);\n",((lw-sv)>>3)+1,lw>>3,1U<<((lw-1)&7),(sv>>3)-1);
+	  bld->appendFormat(" rv.bits[%u] = (v.bits[%u] & %u) ? %u : 0;\n",lw>>3,lw>>3,1U<<((lw-1)&7),(1U<<(lw&7))-1U);
+	}
+       else
+	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[0],&v.bits[%u],%u);\n",sv>>3,(lw-sv)>>3);
+	  bld->appendFormat(" __builtin_memset(&rv.bits[%u],(v.bits[%u]&128)?255:0,%u);\n",(lw-sv)>>3,(lw-1)>>3,sv>>3);
+	}
+     }
+    else
+     { bld->append(" u32 a;\n");
+       bld->newline();
+       switch (lw & 7)
+	{ case 0:
+	     bld->appendFormat(" a = v.bits[%u] | ((v.bits[%u] & 128) ? ~(u32)255 : 0);\n",(lw-1)>>3,(lw-1)>>3);
+	     break;
+	  case 1:
+	     bld->appendFormat(" a = (v.bits[%u] & 1) ? ~(u32)0 : 0;\n",lw>>3);
+	     break;
+	  default:
+	     bld->appendFormat(" a = (v.bits[%u] & %u) | ((v.bits[%u] & %u) ? ~(u32)%u : 0);\n",lw>>3,(1U<<(lw&7))-1,lw>>3,1U<<((lw-1)&7),(1U<<(lw&7))-1U);
+	     break;
+	}
+       s = 8 + ((lw - 1) & 7) - ((lw - 1 - sv) & 7);
+       j = (lw - 9) >> 3;
+       i = (lw - 1 - sv) >> 3;
+       m = (lw & 7) ? (1U << (lw & 7)) - 1U : 255;
+       bld->append("// a\n");
+       if (i < (int)((lw-1) >> 3))
+	{ if (lw & 7)
+	   { bld->append("// b\n");
+	     if (((lw-1) >> 3) - i > 1) bld->appendFormat(" __builtin_memset(&rv.bits[%u],(v.bits[%u]&%u)?255:0,%u);\n",i+1,(lw-1)>>3,1U<<((lw-1)&7),((lw-1)>>3)-i-1);
+	     bld->appendFormat(" rv.bits[%u] = (v.bits[%u] & %u) ? %u : 0;\n",(lw-1)>>3,(lw-1)>>3,1U<<((lw-1)&7),(1U<<(lw&7))-1U);
+	     m = 255;
+	   }
+	  else
+	   { bld->append("// c\n");
+	     bld->appendFormat(" __builtin_memset(&rv.bits[%u],(v.bits[%u]&%u)?255:0,%u);\n",i+1,(lw-1)>>3,1U<<((lw-1)&7),((lw-1)>>3)-i);
+	   }
+	}
+       bld->append("// d\n");
+       for (;i>0;i--,j--)
+	{ bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",j);
+	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & %u;\n",i,s,m);
+	  m = 255;
+	}
+       if (s == 8)
+	{ bld->append("// e\n");
+	  bld->appendFormat(" rv.bits[%u] = a & %u;\n",i,m);
+	}
+       else if (s > 8)
+	{ bld->append("// f\n");
+	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & %u;\n",i,s-8,m);
+	}
+       else
+	{ bld->append("// g\n");
+	  bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",j);
+	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & %u;\n",i,s,m);
+	}
+     }
+    bld->append(" return(rv);\n");
+  }
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_sh_x_shvar(
+	EBPF::CodeBuilder *bld,
+	unsigned int lw, unsigned int rw,
+	const char *sharg, const char *shint,
+	const char **shvarr )
+{
+ const char *indent;
+ int s_set;
+ int i;
+
+ bld->append(" do\n");
+ indent = "  { "/*}*/;
+ if (rw <= 64)
+  { // We assume at least one of the next two if blocks will run;
+    //  we don't care about the case where lw >= 2^64.
+    if (rw < 64)
+     { bld->appendFormat("%s%s &= %lluULL;\n",indent,sharg,(1ULL<<rw)-1ULL);
+       indent = "    ";
+     }
+    if ((rw > 63) || (lw < (1ULL<<rw)-1ULL))
+     { bld->appendFormat("%sif (%s >= %u) break;\n",indent,sharg,lw);
+       // indent = "    "; don't bother; it isn't used further
+     }
+    *shvarr = sharg;
+  }
+ else
+  { if (rw & 7)
+     { bld->appendFormat("%s%s = %s.bits[%d] & %d;\n",indent,shint,sharg,rw>>3,(1<<(rw&7))-1);
+       indent = "    ";
+       if ((1U<<(rw&7))-1U >= lw) bld->appendFormat("    if (%s >= %u) break;\n",shint,lw);
+       s_set = 1;
+     }
+    else
+     { s_set = 0;
+     }
+    // rw > 64 here, so this loop runs at least once
+    for (i=(rw-1)>>3;i>=0;i--)
+     { bld->appendFormat("%s%s = ",indent,shint);
+       indent = "    ";
+       if (s_set) bld->appendFormat("(%s << 8) | (",shint);
+       bld->appendFormat("%s.bits[%d]%s;\n",sharg,i,s_set?")":"");
+       bld->appendFormat("    if (%s >= %u) break;\n",shint,lw);
+       s_set = 1;
+     }
+    *shvarr = shint;
+  }
+}
+
+static void gen_shl_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int lw;
+ unsigned int rw;
+ const char *shvar;
+
+ assert(wr->type == WR_SHL_X);
+ lw = wr->shift_x.lw;
+ rw = wr->shift_x.rw;
+ assert((lw > 64) || (rw > 64));
+ bld->newline();
+ append_type_for_width(bld,lw);
+ bld->appendFormat(" shl_%u_x_%u(",lw,rw);
+ append_type_for_width(bld,lw);
+ bld->append(" v, ");
+ append_type_for_width(bld,rw);
+ bld->append(" sh)\n");
+ bld->append("{\n"/*}*/);
+ if (rw > 64) bld->append(" unsigned int s;\n");
+ if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
+ bld->append(" unsigned int i;\n");
+ bld->append(" u16 a;\n");
+ bld->append(" unsigned int left;\n");
+ bld->append(" unsigned int o;\n");
+ bld->newline();
+ gen_sh_x_shvar(bld,lw,rw,"sh","s",&shvar);
+ // the value in the variable named by shvar is < lw, now
+ // (but we can't assert() that; it's a packet-processing-time thing)
+ if (lw < 64)
+  { bld->appendFormat("    return((v<<%s)&%llu);\n",shvar,(1ULL<<lw)-1ULL);
+  }
+ else if (lw == 64)
+  { bld->appendFormat("    return(v<<%s);\n",shvar);
+  }
+ else
+  { if (rw > 3)
+     { bld->appendFormat("    for (o=0;%s>=8;o++,%s-=8) rv.bits[o] = 0;\n",shvar,shvar);
+       bld->appendFormat("    a = 0;\n");
+       bld->appendFormat("    left = %u - (8 * o);\n",lw);
+       bld->append      ("    for (i=0;left>=8;left-=8)\n");
+     }
+    else
+     { bld->appendFormat("    a = 0;\n");
+       bld->appendFormat("    for (i=0,o=0,left=%u;left>=8;left-=8)\n",lw);
+     }
+    bld->appendFormat("     { a = (a >> 8) | (v.bits[i++] << %s);\n"/*}*/,shvar);
+    bld->append      ("       rv.bits[o++] = a & 255;\n");
+    bld->append (/*{*/"     }\n");
+    bld->append      ("    if (left)\n");
+    bld->appendFormat("     { if (left > %s) a = (a >> 8) | (v.bits[i++] << %s); else a >>= 8;\n"/*}*/,shvar,shvar);
+    bld->append      ("       rv.bits[o++] = a & ((1U << left) - 1);\n");
+    bld->append (/*{*/"     }\n");
+    bld->append      ("    return(rv);\n");
+  }
+ bld->append(/*{*/"  } while (0);\n");
+ bld->append(" return(");
+ if (lw <= 64)
+  { bld->append("0");
+  }
+ else
+  { bld->appendFormat("(struct internal_bit_%u){{0}}",lw);
+  }
+ bld->append(");\n");
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_shrl_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int lw;
+ unsigned int rw;
+ const char *shvar;
+
+ assert(wr->type == WR_SHRL_X);
+ lw = wr->shift_x.lw;
+ rw = wr->shift_x.rw;
+ assert((lw > 64) || (rw > 64));
+ bld->newline();
+ append_type_for_width(bld,lw);
+ bld->appendFormat(" shrl_%u_x_%u(",lw,rw);
+ append_type_for_width(bld,lw);
+ bld->append(" v, ");
+ append_type_for_width(bld,rw);
+ bld->append(" sh)\n");
+ bld->append("{\n"/*}*/);
+ if (rw > 64) bld->append(" unsigned int s;\n");
+ if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
+ bld->append(" u16 a;\n");
+ bld->append(" unsigned int i;\n");
+ bld->append(" unsigned int o;\n");
+ bld->newline();
+ gen_sh_x_shvar(bld,lw,rw,"sh","s",&shvar);
+ // the value in the variable named by shvar is < lw, now
+ // (but we can't assert() that; it's a packet-processing-time thing)
+ if (lw <= 64)
+  { bld->appendFormat("    return(v>>%s);\n",shvar);
+  }
+ else
+  { bld->appendFormat("    i = %s >> 3;\n",shvar);
+    bld->appendFormat("    %s = 8 - (%s & 7ULL);\n",shvar,shvar);
+    bld->appendFormat("    a = v.bits[i++] << %s;\n",shvar);
+    bld->append      ("    o = 0;\n");
+    bld->appendFormat("    for (;i<%u;i++)\n",(lw+7)>>3);
+    bld->appendFormat("     { a = (a >> 8) | (v.bits[i] << %s);\n"/*}*/,shvar);
+    bld->appendFormat("       rv.bits[o++] = a & 255;\n");
+    bld->append      (/*{*/"     }\n");
+    if (lw & 7) bld->appendFormat("    a &= %u << %s;\n",(1U<<(lw&7))-1U,shvar);
+    bld->append      ("    rv.bits[o++] = a >> 8;\n");
+    bld->appendFormat("    for (;o<%u;o++) rv.bits[o] = 0;\n",(lw+7)>>3);
+    bld->append      ("    return(rv);\n");
+  }
+ bld->append(/*{*/"  } while (0);\n");
+ bld->append(" return(");
+ if (lw <= 64)
+  { bld->append("0");
+  }
+ else
+  { bld->appendFormat("(struct internal_bit_%u){{0}}",lw);
+  }
+ bld->append(");\n");
  bld->append(/*{*/"}\n");
 }
 
@@ -1139,11 +1440,8 @@ static void gen_shra_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
 {
  unsigned int lw;
  unsigned int rw;
- int i;
- const char *pref;
- const char *indent;
  const char *shvar;
- int s_set;
+ int i;
 
  assert(wr->type == WR_SHRA_X);
  lw = wr->shift_x.lw;
@@ -1157,135 +1455,76 @@ static void gen_shra_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  append_type_for_width(bld,rw);
  bld->append(" sh)\n");
  bld->append("{\n"/*}*/);
- if (rw >= 64) bld->append(" unsigned int s;\n");
- bld->append(" unsigned int i;\n");
- if (lw >= 64) bld->appendFormat(" internal_bit_%u rv;\n",lw);
+ if (rw > 64) bld->append(" unsigned int s;\n");
+ if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
  bld->append(" u16 a;\n");
- bld->append(" unsigned int left;\n");
+ bld->append(" unsigned int i;\n");
  bld->append(" unsigned int o;\n");
- bld->append("\n");
- if (rw <= 64)
-  { bld->appendFormat(" if (sh >= %u) return(",lw);
-    if (lw <= 64)
-     { bld->appendFormat("((v->bits[%d]&%d)?0x%llx:0)",(lw-1)>>3,1<<((lw-1)&7),(lw==64)?0xffffffffffffffffULL:(1ULL<<lw)-1ULL);
-     }
-    else
-     { bld->appendFormat("((v->bits[%d]&%d)?(struct internal_bit_%u){"/*}*/,(lw-1)>>3,1<<((lw-1)&7),lw);
-       if (lw & 7)
-	{ bld->appendFormat("%d",(1U<<(lw&7))-1);
-	  pref = ",";
-	}
-       else
-	{ pref = "";
-	}
-       for (i=lw>>3;i>0;i--)
-	{ bld->appendFormat("%s255",pref);
-	  pref = ",";
-	}
-       bld->appendFormat(/*{*/"}:(struct internal_bit_%u){0})",lw);
-     }
-    bld->append(");\n");
-    indent = " ";
-    shvar = "sh";
-  }
- else
-  { bld->append(" do\n");
-    indent = "  { "/*}*/;
-    if (rw & 7)
-     { bld->appendFormat("%ss = sh->bits[%d] & %d;\n",indent,rw>>3,(1<<(rw&7))-1);
-       indent = "    ";
-       if ((1U<<(rw&7))-1U >= lw) bld->appendFormat("    if (s >= %u) break;\n",lw);
-       s_set = 1;
-     }
-    else
-     { s_set = 0;
-     }
-    // rw >= 64, so this loop runs at least once
-    for (i=rw>>3;i>=0;i--)
-     { bld->appendFormat("%ss = %ssh->bits[%d]%s;\n",indent,s_set?"(s << 8) | (":"",i,s_set?")":"");
-       indent = "    ";
-       bld->appendFormat("    if (s >= %u) break;\n",lw);
-     }
-    shvar = "s";
-  }
- // indent must be all spaces by this point
+ bld->append(" u8 sign;\n");
+ bld->newline();
+ gen_sh_x_shvar(bld,lw,rw,"sh","s",&shvar);
+ // the value in the variable named by shvar is < lw, now
+ // (but we can't assert() that; it's a packet-processing-time thing)
  if (lw <= 64)
-  { bld->appendFormat("%sreturn((v&0x%llxLL)?(~((~v)>>%s))&0x%llxLL:(v>>%s));\n",
-		indent,1ULL<<(lw-1),shvar,(((1ULL<<(lw-1))-1ULL)<<1)|1ULL,shvar);
+  { bld->appendFormat("    return((v>>%s)|((v&%lluULL)?(((1ULL<<%s)-1ULL)<<(%u-%s)):0));\n",shvar,1ULL<<(lw-1),shvar,lw,shvar);
   }
  else
-  { bld->appendFormat("%sif (%u-%s >= %u)\n",indent,lw,shvar,(lw-1)&~7);
-    bld->appendFormat("%sXXX FINISH THIS;;;\n",indent);
-  }
- bld->appendFormat("%sreturn(rv);\n",indent);
- if (rw > 64)
-  { bld->append(/*{*/"  } while (0);\n");
-    bld->append(" return(");
-    if (lw <= 64)
-     { bld->append("0\n");
+  { bld->appendFormat("    if (! %s) return(v);\n",shvar);
+    bld->appendFormat("    sign = (v.bits[%u] & %u) ? 255 : 0;\n",(lw-1)>>3,1U<<((lw-1)&7));
+    bld->appendFormat("    i = %s >> 3;\n",shvar);
+    bld->appendFormat("    %s = 8 - (%s & 7ULL);\n",shvar,shvar);
+    if (lw & 7)
+     { bld->appendFormat("    a = ((i == %u) ? (v.bits[%u] & %u) | ((sign << %u) & 255) : v.bits[i]) << %s;\n",
+		(lw-1)>>3, (lw-1)>>3, (1U<<(lw&7))-1U, lw&7, shvar);
+       bld->append      ("    i ++;\n");
+       bld->append      ("    o = 0;\n");
+       bld->appendFormat("    for (;i<%u;i++)\n",(lw-1)>>3);
+       bld->appendFormat("     { a = (a >> 8) | (v.bits[i] << %s);\n"/*}*/,shvar);
+       bld->appendFormat("       rv.bits[o++] = a & 255;\n");
+       bld->append      (/*{*/"     }\n");
+       bld->appendFormat("    if (i == %u)\n",(lw-1)>>3);
+       bld->appendFormat("     { a = (a >> 8) | ((v.bits[%u] & %u) << %s) | (sign << (%s + %u));\n"/*}*/,
+		(lw-1)>>3, (1U<<(lw&7))-1U, shvar, shvar, lw&7);
+       bld->append      ("       rv.bits[o] = a & 255;\n");
+       bld->append      ("       o ++;\n");
+       bld->append      (/*{*/"     }\n");
+       bld->appendFormat("    a |= sign << (8 + %s);\n",shvar);
+       bld->appendFormat("    if (o == %u)\n",(lw-1)>>3);
+       bld->appendFormat("     { rv.bits[o++] = (a >> 8) & %u;\n"/*}*/,(1U<<(lw&7))-1U);
+       bld->append      (/*{*/"     }\n");
+       bld->append      ("    else\n");
+       bld->append      ("     { rv.bits[o++] = (a >> 8) & 255;\n"/*}*/);
+       bld->appendFormat("       for (;o<%u;o++) rv.bits[o] = sign;\n",(lw-1)>>3);
+       bld->appendFormat("       rv.bits[o] = sign & %u;\n",(1U<<(lw&7))-1U);
+       bld->append      (/*{*/"     }\n");
      }
     else
-     { bld->appendFormat("(struct internal_bit_%u){0}",lw);
+     { bld->appendFormat("    a = v.bits[i++] << %s;\n",shvar);
+       bld->append      ("    o = 0;\n");
+       bld->appendFormat("    for (;i<%u;i++)\n",(lw+7)>>3);
+       bld->appendFormat("     { a = (a >> 8) | (v.bits[i] << %s);\n"/*}*/,shvar);
+       bld->appendFormat("       rv.bits[o++] = a & 255;\n");
+       bld->append      (/*{*/"     }\n");
+       bld->appendFormat("    if (o < %u)\n",(lw+7)>>3);
+       bld->appendFormat("     { a = (a >> 8) | (sign << %s);\n"/*}*/,shvar);
+       bld->appendFormat("       rv.bits[o++] = a & 255;\n");
+       bld->append      (/*{*/"     }\n");
+       bld->appendFormat("    for (;o<%u;o++) rv.bits[o] = sign;\n",(lw+7)>>3);
      }
-    bld->append(");\n");
+    bld->append      ("    return(rv);\n");
   }
- bld->append(/*{*/"}\n");
-}
-
-static void gen_shra_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
-{
- unsigned int lw;
- unsigned int sv;
-
- assert(wr->type == WR_SHRA_C);
- lw = wr->shift_c.lw;
- sv = wr->shift_c.sv;
- assert(lw > 64);
- bld->newline();
- append_type_for_width(bld,lw);
- bld->appendFormat(" shra_%u_c_%u(",lw,sv);
- append_type_for_width(bld,lw);
- bld->append(" v)\n");
- bld->append("{\n"/*}*/);
- bld->append(" XXX WRITE THIS;;;\n");
- bld->append(/*{*/"}\n");
-}
-
-static void gen_shrl_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
-{
- unsigned int lw;
- unsigned int rw;
-
- assert(wr->type == WR_SHRL_X);
- lw = wr->shift_x.lw;
- rw = wr->shift_x.rw;
- assert(lw > 64);
- bld->newline();
- append_type_for_width(bld,lw);
- bld->appendFormat(" shrl_%u_x_%u(",lw,rw);
- append_type_for_width(bld,lw);
- bld->append(" v)\n");
- bld->append("{\n"/*}*/);
- bld->append(" XXX WRITE THIS;;;\n");
- bld->append(/*{*/"}\n");
-}
-
-static void gen_shrl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
-{
- unsigned int lw;
- unsigned int sv;
-
- assert(wr->type == WR_SHRL_C);
- lw = wr->shift_c.lw;
- sv = wr->shift_c.sv;
- assert(lw > 64);
- bld->newline();
- append_type_for_width(bld,lw);
- bld->appendFormat(" shrl_%u_c_%u(",lw,sv);
- append_type_for_width(bld,lw);
- bld->append(" v)\n");
- bld->append("{\n"/*}*/);
- bld->append(" XXX WRITE THIS;;;\n");
+ bld->append(/*{*/"  } while (0);\n");
+ bld->append(" return(");
+ if (lw <= 64)
+  { bld->appendFormat("(v&%lluULL)?%lluULL:0",1ULL<<(lw-1),((1ULL<<(lw-1))<<1)|1ULL);
+  }
+ else
+  { bld->appendFormat("(v.bits[%u]&%u)?(struct internal_bit_%u){{"/*}}*/,(lw-1)>>3,1U<<((lw-1)&7),lw);
+    for (i=(lw-1)>>3;i>0;i--) bld->append("255,");
+    bld->appendFormat("%u",(1U<<(((lw-1)&7)+1))-1);
+    bld->appendFormat(/*{{*/"}}:(struct internal_bit_%u){{0}}",lw);
+  }
+ bld->append(");\n");
  bld->append(/*{*/"}\n");
 }
 
