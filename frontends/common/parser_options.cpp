@@ -481,7 +481,7 @@ void ParserOptions::dumpPass(const char *manager, unsigned seq, const char *pass
             std::string suffix = absl::StrFormat("-%04zu-%s", ++dump_uid, name);
             std::filesystem::path fileName =
                 makeFileName(dumpFolder, (file == "-" ? "tmp.p4" : file), suffix);
-
+std::cout << "Dumping " << static_cast<const void *>(node) << " to " << fileName << std::endl;
             std::unique_ptr<std::ostream> stream{openFile(fileName, true)};
             if (stream != nullptr) {
                 if (Log::verbose()) std::cerr << "Writing program to " << fileName << std::endl;

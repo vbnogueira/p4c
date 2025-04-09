@@ -40,40 +40,57 @@ const cstring pnaParserMeta = "pna_main_parser_input_metadata_t"_cs;
 const cstring pnaInputMeta = "pna_main_input_metadata_t"_cs;
 const cstring pnaOutputMeta = "pna_main_output_metadata_t"_cs;
 
+Visitor::profile_t FIXUP_CASTS::init_apply(const IR::Node *n)
+{
+ std::cout << "FIXUP_CASTS init_apply n = " << static_cast<const void *>(n) << std::endl;
+ return(this->Transform::init_apply(n));
+}
+
+void FIXUP_CASTS::end_apply(const IR::Node *n)
+{
+ std::cout << "FIXUP_CASTS end_apply n = " << static_cast<const void *>(n) << std::endl;
+ Transform::end_apply(n);
+}
+
 const IR::Node *FIXUP_CASTS::preorder(IR::Statement *s)
 {
  CONTAINER *c;
 
- std::cout << "cast fixup: preorder: " << (void *)s << '\n' << s->toString() << std::endl;
  c = new CONTAINER;
  c->temps = 0;
+ c->stmts = 0;
  c->s = s;
  c->link = contain;
  contain = c;
  return(s);
 }
 
-const IR::Node *FIXUP_CASTS::postorder(IR::Statement *s)
+const IR::Node *FIXUP_CASTS::postorder(IR::Statement *stmt)
 {
  CONTAINER *c;
- DECLLIST *temps;
+ DECLLIST *tl;
  DECLLIST *t;
+ STMTLIST *sl;
+ STMTLIST *s;
  IR::BlockStatement *b;
 
- std::cout << "cast fixup: postorder: " << (void *)s << '\n' << s->toString() << std::endl;
  c = contain;
- if (c->s != s) abort();
+ if (c->s != stmt) abort();
  contain = c->link;
- temps = c->temps;
+ tl = c->temps;
  c->temps = 0;
+ sl = c->stmts;
+ c->stmts = 0;
  delete c;
- if (! temps) return(s);
+ if (! tl) return(stmt);
+ std::cout << '\n' << "cast fixup: postorder: " << (void *)stmt << '\n' << stmt->toString() << std::endl;
  std::cout << "Declarations:";
- for (t=temps;t;t=t->link) std::cout << " " << t->decl->toString();
+ for (t=tl;t;t=t->link) std::cout << " " << t->decl->toString();
  std::cout << std::endl;
  b = new IR::BlockStatement();
- for (t=temps;t;t=t->link) b->append(t->decl);
- b->append(s);
+ for (t=tl;t;t=t->link) b->append(t->decl);
+ for (s=sl;s;s=s->link) b->append(s->stmt);
+ b->append(stmt);
  return(b);
 }
 
@@ -87,6 +104,18 @@ static void save_temp(TC::CONTAINER *c, IR::Declaration *d)
  c->temps = dl;
 }
 
+static void save_assign(TC::CONTAINER *c, IR::Declaration *var, const IR::Expression *e)
+{
+ STMTLIST *sl;
+ IR::AssignmentStatement *a;
+
+ sl = new STMTLIST;
+ a = new IR::AssignmentStatement(new IR::PathExpression(var->name),e);
+ sl->stmt = a;
+ sl->link = c->stmts;
+ c->stmts = sl;
+}
+
 /*
  * The dance for IR::Type_Type is because I see such coming back from
  *  typemap->getType().  I don't know why and I don't know what it
@@ -97,7 +126,7 @@ const IR::Node *FIXUP_CASTS::postorder(IR::Cast *e)
  CONTAINER *c;
 
  if (! EBPF::EBPFTypeFactory::instance) abort();
- std::cout << "cast fixup: cast expression: " << e->toString() << std::endl;
+ std::cout << '\n' << "cast fixup: cast expression: " << e->toString() << std::endl;
  std::cout << "Contained in:";
  for (c=contain;c;c=c->link) std::cout << ' ' << (void *)c->s;
  std::cout << std::endl;
@@ -132,6 +161,9 @@ const IR::Node *FIXUP_CASTS::postorder(IR::Cast *e)
  std::cout << "Dst declaration: " << dd->toString() << std::endl;
  save_temp(contain,sd);
  save_temp(contain,dd);
+ save_assign(contain,dd,new IR::MethodCallExpression(new IR::PathExpression(":?:"),{new IR::PathExpression(sd->name)}));
+// save_assign(contain,dd,new IR::PathExpression(sd->name));
+ save_assign(contain,sd,e->expr);
  auto px = new IR::PathExpression(dd->getName());
  std::cout << "Cast expression: " << (void *)e << ", " << e->toString() << std::endl;
  std::cout << "Replacement expression: " << (void *)px << ", " << px->toString() << std::endl;
@@ -191,7 +223,9 @@ bool Backend::ebpfCodeGen(P4::ReferenceMap *refMapEBPF, P4::TypeMap *typeMapEBPF
 
     auto hook = options.getDebugHook();
     rewriteToEBPF.addDebugHook(hook, true);
+ std::cout << "ebpfCodeGen: BEGIN rewriteToEBPF" << std::endl;
     program = program->apply(rewriteToEBPF);
+ std::cout << "ebpfCodeGen: END rewriteToEBPF" << std::endl;
 
     // map IR node to compile-time allocated resource blocks.
     top->apply(*new P4::BuildResourceMap(&structure.resourceMap));

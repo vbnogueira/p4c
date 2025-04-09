@@ -190,7 +190,7 @@ bool CodeGenInspector::preorder(const IR::Cast *c) {
     int prec = expressionPrecedence;
     bool useParens = prec > c->getPrecedence();
     if (useParens) builder->append("(");
-std::cout << "CGI::preorder(IR::Cast), " << (void *)c << ", destType " << c->destType->toString() << std::endl;
+std::cout << "CGI::preorder(IR::Cast), " << (void *)c << ": " << c->toString() << ", destType " << c->destType->toString() << std::endl;
     builder->append("(");
     auto et = EBPFTypeFactory::instance->create(c->destType);
     et->emit(builder);
@@ -482,7 +482,7 @@ void CodeGenInspector::widthCheck(const IR::Node *node) const {
     }
     ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET, "%1%: Computations on %2% bits not supported",
                 node, tb->size);
-#lse
+#else
  (void)node;
 #endif
 }
@@ -515,6 +515,7 @@ void CodeGenInspector::emitTCBinaryOperation(const IR::Operation_Binary *b, bool
     const IR::Expression *rexpr = b->right;
     cstring stringop = b->getStringOp();
 
+builder->append("/*TCBO*/");
     auto action = findContext<IR::P4Action>();
     auto tcTarget = dynamic_cast<const P4TCTarget *>(builder->target);
     cstring lByteOrder = "HOST"_cs, rByteOrder = "HOST"_cs;

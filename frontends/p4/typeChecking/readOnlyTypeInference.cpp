@@ -24,6 +24,7 @@ static void checkConstant(const IR::Node *orig, const IR::Node *transformed) {
 
 #define DEFINE_PREORDER(type)                               \
     bool ReadOnlyTypeInference::preorder(const type *n) {   \
+/*std::cout << "ROTI preorder for " << #type << '\n';*/\
         auto [res, prune] = TypeInferenceBase::preorder(n); \
         checkConstant(n, res);                              \
         return !prune;                                      \
@@ -39,6 +40,7 @@ DEFINE_PREORDER(IR::Type_SerEnum)
 
 #define DEFINE_POSTORDER(type)                             \
     void ReadOnlyTypeInference::postorder(const type *n) { \
+/*std::cout << "ROTI postorder for " << #type << '\n';*/\
         const auto *res = TypeInferenceBase::postorder(n); \
         checkConstant(n, res);                             \
     }
@@ -151,6 +153,7 @@ DEFINE_POSTORDER(IR::SelectCase)
 DEFINE_POSTORDER(IR::Annotation)
 
 Visitor::profile_t ReadOnlyTypeInference::init_apply(const IR::Node *node) {
+//std::cout << "Starting ReadOnlyTypeInference pass" << std::endl;
     auto rv = Inspector::init_apply(node);
     TypeInferenceBase::start(node);
 
@@ -158,6 +161,7 @@ Visitor::profile_t ReadOnlyTypeInference::init_apply(const IR::Node *node) {
 }
 
 void ReadOnlyTypeInference::end_apply(const IR::Node *node) {
+//std::cout << "Ending ReadOnlyTypeInference pass" << std::endl;
     TypeInferenceBase::finish(node);
     Inspector::end_apply(node);
 }

@@ -49,10 +49,17 @@ struct decllist {
   IR::Declaration *decl;
   } ;
 
+typedef struct stmtlist STMTLIST;
+struct stmtlist {
+  STMTLIST *link;
+  IR::Statement *stmt;
+  } ;
+
 typedef struct container CONTAINER;
 struct container {
   CONTAINER *link;
   DECLLIST *temps;
+  STMTLIST *stmts;
   IR::Statement *s;
   } ;
 
@@ -64,6 +71,8 @@ class FIXUP_CASTS : public Transform {
     const IR::Node *preorder(IR::Statement *) override;
     const IR::Node *postorder(IR::Statement *) override;
     const IR::Node *postorder(IR::Cast *) override;
+    virtual profile_t init_apply(const IR::Node *) override;
+    virtual void end_apply(const IR::Node *) override;
   public:
     explicit FIXUP_CASTS(P4::ReferenceMap *rm, P4::TypeMap *tm) : contain(0), refmap(rm), typemap(tm) { };
   } ;
