@@ -2846,6 +2846,20 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Mul *e)
  return(arith_common(e,"*","mul"));
 }
 
+/*
+ * Grr.  In places where we want to call on our base class's method, it
+ *  does not work to just convert to the base class
+ *  (ControlBodyTranslator in our case); for example,
+
+    return(static_cast<EBPF::ControlBodyTranslator *>(this)->preorder(e));
+
+ *  draws an "error: no matching function for call" failure.  Why it
+ *  doesn't use CodeGenInspector's methods baffles me.
+ *
+ * Places where this is relevant are commented
+ *     // See inheritance comment above
+ */
+
 bool ControlBodyTranslatorPNA::preorder(const IR::Cast *e)
 {
  assert(e->type->is<IR::Type_Bits>());
@@ -2857,15 +2871,24 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Cast *e)
     return(false);
   }
  if ((fw <= 64) && (tw <= 64))
-  { /*
-     * Grr.  It does not work to convert to ControlBodyTranslator;
-    return(static_cast<EBPF::ControlBodyTranslator *>(this)->preorder(e));
-     *  -> "error: no matching function for call" failure.  Why it
-     * doesn't use CodeGenInspector's methods baffles me.
-     */
+  { // See inheritance comment above
     return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
   }
  builder->appendFormat("cast_%d_to_%d(",fw,tw);
+ visit(e->expr);
+ builder->append(")");
+ return(false);
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::Neg *e)
+{
+ assert(e->type->is<IR::Type_Bits>());
+ auto w = e->type->to<IR::Type_Bits>()->width_bits();
+ if (w <= 64)
+  { // See inheritance comment above
+    return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
+  }
+ builder->appendFormat("neg_%d(",w);
  visit(e->expr);
  builder->append(")");
  return(false);

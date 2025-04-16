@@ -71,6 +71,7 @@ enum WRTYPE {
   WR_MUL,
   WR_BXSMUL,
   WR_CAST,
+  WR_NEG,
   } ;
 
 class WIDTH_REC {
@@ -85,7 +86,7 @@ class WIDTH_REC {
 	int rhsw;
 	// result width is implicit: is lhsw + rhsw
 	} concat;
-      // if WR_ADD, WR_SUB, WR_MUL
+      // if WR_ADD, WR_SUB, WR_MUL, WR_NEG
       struct {
 	int w;
 	} arith;
@@ -115,6 +116,7 @@ class WIDTH_REC {
 	  case WR_ADD:
 	  case WR_SUB:
 	  case WR_MUL:
+	  case WR_NEG:
 	     return(l.arith.w<r.arith.w);
 	     break;
 	  case WR_BXSMUL:
@@ -142,6 +144,7 @@ class WIDTH_REC {
 	  case WR_ADD:
 	  case WR_SUB:
 	  case WR_MUL:
+	  case WR_NEG:
 	     return(l.arith.w==r.arith.w);
 	     break;
 	  case WR_BXSMUL:
@@ -181,7 +184,9 @@ class SCAN_WIDTHS : public Inspector {
     virtual bool preorder(const IR::Sub *) override;
     virtual bool preorder(const IR::Mul *) override;
     virtual bool preorder(const IR::Cast *) override;
-    bool arith_common(const IR::Operation_Binary *, WRTYPE, bool = true);
+    virtual bool preorder(const IR::Neg *) override;
+    bool arith_common_2(const IR::Operation_Binary *, WRTYPE, bool = true);
+    bool arith_common_1(const IR::Operation_Unary *, WRTYPE, bool = true);
     profile_t init_apply(const IR::Node *) override;
     void end_apply(const IR::Node *) override;
     void revisit_visited();

@@ -82,6 +82,9 @@ void SCAN_WIDTHS::dump() const
        case WR_CAST:
 	  std::cout << "CAST: " << wr->cast.fw << " -> " << wr->cast.tw;
 	  break;
+       case WR_NEG:
+	  std::cout << "NEG: " << wr->arith.w;
+	  break;
        default:
 	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
 	  break;
@@ -138,7 +141,7 @@ bool SCAN_WIDTHS::preorder(const IR::Concat *e)
  return(true);
 }
 
-bool SCAN_WIDTHS::arith_common(const IR::Operation_Binary *e, WRTYPE t, bool docommon)
+bool SCAN_WIDTHS::arith_common_2(const IR::Operation_Binary *e, WRTYPE t, bool docommon)
 {
  if (docommon) expr_common(e);
  auto lt = e->left->type->to<IR::Type_Bits>();
@@ -151,6 +154,14 @@ bool SCAN_WIDTHS::arith_common(const IR::Operation_Binary *e, WRTYPE t, bool doc
  return(true);
 }
 
+bool SCAN_WIDTHS::arith_common_1(const IR::Operation_Unary *e, WRTYPE t, bool docommon)
+{
+ if (docommon) expr_common(e);
+ auto et = e->expr->type->to<IR::Type_Bits>();
+ if (et) add_arith(t,et->width_bits());
+ return(true);
+}
+
 bool SCAN_WIDTHS::big_x_small_mul(const IR::Expression *big, const IR::Constant *small)
 {
  auto bt = big->type->to<IR::Type_Bits>();
@@ -160,12 +171,12 @@ bool SCAN_WIDTHS::big_x_small_mul(const IR::Expression *big, const IR::Constant 
 
 bool SCAN_WIDTHS::preorder(const IR::Add *e)
 {
- return(arith_common(e,WR_ADD));
+ return(arith_common_2(e,WR_ADD));
 }
 
 bool SCAN_WIDTHS::preorder(const IR::Sub *e)
 {
- return(arith_common(e,WR_SUB));
+ return(arith_common_2(e,WR_SUB));
 }
 
 bool SCAN_WIDTHS::preorder(const IR::Mul *e)
@@ -187,7 +198,7 @@ bool SCAN_WIDTHS::preorder(const IR::Mul *e)
      { return(big_x_small_mul(e->left,cx));
      }
   }
- return(arith_common(e,WR_MUL,false));
+ return(arith_common_2(e,WR_MUL,false));
 }
 
 bool SCAN_WIDTHS::preorder(const IR::Cast *e)
@@ -198,6 +209,11 @@ bool SCAN_WIDTHS::preorder(const IR::Cast *e)
   { add_cast(e->expr->type->to<IR::Type_Bits>()->width_bits(),e->type->to<IR::Type_Bits>()->width_bits());
   }
  return(true);
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Neg *e)
+{
+ return(arith_common_1(e,WR_NEG));
 }
 
 // There's _got_ to be a C++ standard object that can do this better.
@@ -302,6 +318,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
        case WR_MUL:
        case WR_BXSMUL:
        case WR_CAST:
+       case WR_NEG:
 	  break;
        default:
 	  abort();
@@ -338,6 +355,13 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  assert(wrv[i].arith.w > 64);
 	  bld->appendFormat("extern struct internal_bit_%d %s_%d(struct internal_bit_%d, struct internal_bit_%d);\n",
 		wrv[i].arith.w, opname, wrv[i].arith.w, wrv[i].arith.w, wrv[i].arith.w);
+	  break;
+       case WR_NEG:
+	  opname = "neg";
+	  bld->newline();
+	  assert(wrv[i].arith.w > 64);
+	  bld->appendFormat("extern struct internal_bit_%d %s_%d(struct internal_bit_%d);\n",
+		wrv[i].arith.w, opname, wrv[i].arith.w, wrv[i].arith.w);
 	  break;
        case WR_BXSMUL:
 	  bld->newline();
@@ -547,6 +571,28 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 		   pref = " |\n       ";
 		 }
 		bld->append(";\n");
+	      }
+	     bld->append(" return(ret);\n");
+	     bld->append(/*{*/"}\n");
+	   }
+	  break;
+       case WR_NEG:
+	   { unsigned int w = wrv[i].arith.w;
+	     int i;
+	     int j;
+	     assert(w > 64);
+	     bld->newline();
+	     bld->appendFormat("struct internal_bit_%u neg_%u(struct internal_bit_%d arg)\n",w,w,w);
+	     bld->append("{\n"/*}*/);
+	     bld->append(" u16 a;\n");
+	     bld->appendFormat(" struct internal_bit_%d ret;\n",w);
+	     bld->append("\n");
+	     for (i=(w>>3)-1,j=0;i>=0;i--,j++)
+	      { bld->appendFormat(" a = %s + (255 ^ arg->bits[%d]);\n",j?"(a >> 8)":"1",j);
+		bld->appendFormat(" ret->bits[%d] = a & 255;\n",j);
+	      }
+	     if (w & 7)
+	      { bld->appendFormat(" ret->bits[%d] = (%s + (255 ^ arg->bits[%d])) & %d;\n",j?"(a >> 8)":"1",j,j,(1<<(w&7))-1);
 	      }
 	     bld->append(" return(ret);\n");
 	     bld->append(/*{*/"}\n");
