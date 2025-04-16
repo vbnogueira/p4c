@@ -37,10 +37,10 @@ bool CodeGenInspector::preorder(const IR::Constant *expression) {
     }
 
     cstring str = EBPFInitializerUtils::genHexStr(expression->value, width, expression);
-    builder->append("{ ");
+    builder->appendFormat("(struct internal_bit_%u){{ "/*}}*/,width);
     for (size_t i = 0; i < str.size() / 2; ++i)
         builder->appendFormat("0x%v, ", str.substr(2 * i, 2));
-    builder->append("}");
+    builder->append(/*{{*/"}}");
 
     return false;
 }
@@ -344,15 +344,7 @@ bool CodeGenInspector::preorder(const IR::Type_Enum *type) {
 
 void CodeGenInspector::emitAssignStatement(const IR::Type *ltype, const IR::Expression *lexpr,
                                            cstring lpath, const IR::Expression *rexpr) {
-    auto ebpfType = EBPFTypeFactory::instance->create(ltype);
-    bool memcpy = false;
-    EBPFScalarType *scalar = nullptr;
-    unsigned width = 0;
-    if (ebpfType->is<EBPFScalarType>()) {
-        scalar = ebpfType->to<EBPFScalarType>();
-        width = scalar->implementationWidthInBits();
-        memcpy = !EBPFScalarType::generatesScalar(width);
-    }
+(void)ltype;
     builder->emitIndent();
     if (lexpr == nullptr) builder->appendFormat("/* lexpr = nil, lpath %s */",lpath); else builder->appendFormat("/* lexpr = %s */",lexpr->toString());
     builder->newline();
@@ -360,33 +352,16 @@ void CodeGenInspector::emitAssignStatement(const IR::Type *ltype, const IR::Expr
     builder->appendFormat("/* rexpr = %s */",rexpr->toString());
     builder->newline();
     builder->emitIndent();
-    if (memcpy) {
-        builder->append("__builtin_memcpy/*G*/(&");
-        if (lexpr != nullptr) {
-            visit(lexpr);
-        } else {
-            builder->append(lpath);
-        }
-        builder->append(", ");
-	auto rtype = EBPFTypeFactory::instance->create(typeMap->getType(rexpr));
-	if (rtype->is<EBPFScalarType>() && rtype->is_array()) builder->append("& /* no */"); else builder->append("/* yes */");
-        if (rexpr->is<IR::Constant>()) {
-            builder->appendFormat("(u8[%u])", scalar->bytesRequired());
-        }
-        visit(rexpr);
-        builder->appendFormat(", %d)", scalar->bytesRequired());
+    if (lexpr != nullptr) {
+        visit(lexpr);
     } else {
-        if (builder->target->name == "P4TC") {
-            emitTCAssignmentEndianessConversion(ltype, lexpr, rexpr, lpath);
-        } else {
-            if (lexpr != nullptr) {
-                visit(lexpr);
-            } else {
-                builder->append(lpath);
-            }
-            builder->append(" = ");
-            visit(rexpr);
-        }
+        builder->append(lpath);
+    }
+    builder->append(" = ");
+    if (builder->target->name == "P4TC") {
+        emitTCAssignmentEndianessConversion(ltype, lexpr, rexpr, lpath);
+    } else {
+        visit(rexpr);
     }
     builder->endOfStatement();
 }

@@ -403,6 +403,7 @@ class ControlBodyTranslatorPNA : public EBPF::ControlBodyTranslator {
     bool IsTableAddOnMiss(const IR::P4Table *table);
     const IR::P4Action *GetAddOnMissHitAction(cstring actionName);
     void ValidateAddOnMissMissAction(const IR::P4Action *act);
+    bool preorder(const IR::Concat *) override;
 };
 
 // Similar to class ActionTranslationVisitorPSA in backends/ebpf/psa/ebpfPsaControl.h

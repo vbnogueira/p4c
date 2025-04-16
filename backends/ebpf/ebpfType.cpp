@@ -139,10 +139,7 @@ void EBPFScalarType::declare(CodeBuilder *builder, cstring id, bool asPointer) {
         builder->spc();
         builder->append(id);
     } else {
-        if (asPointer)
-            builder->appendFormat("u8* %s", id.c_str());
-        else
-            builder->appendFormat("u8 %s[%d]", id.c_str(), bytesRequired());
+        builder->appendFormat("struct internal_bit_%u %s%s",width,asPointer?"*":"",id.c_str());
     }
 }
 
@@ -155,9 +152,9 @@ void EBPFScalarType::declareInit(CodeBuilder *builder, cstring id, bool asPointe
         builder->append(id);
     } else {
         if (asPointer)
-            builder->appendFormat("u8* %s = NULL", id.c_str());
+            builder->appendFormat("struct internal_bit_%u *%s = 0",width,id.c_str());
         else
-            builder->appendFormat("u8 %s[%d] = {0}", id.c_str(), bytesRequired());
+            builder->appendFormat("struct internal_bit_%u %s = {{ 0 }}",width,id.c_str());
     }
 }
 

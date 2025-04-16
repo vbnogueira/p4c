@@ -2745,4 +2745,38 @@ EBPF::EBPFHashAlgorithmPSA *EBPFHashAlgorithmTypeFactoryPNA::create(
     return nullptr;
 }
 
+bool ControlBodyTranslatorPNA::preorder(const IR::Concat *e)
+{
+ builder->append("/*CONCAT*/");
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt)
+  { builder->append("/*A*/");
+    auto rt = e->right->type->to<IR::Type_Bits>();
+    if (rt)
+     { builder->append("/*B*/");
+       auto lbits = lt->width_bits();
+       auto rbits = rt->width_bits();
+       if (lbits+rbits > 64)
+	{ builder->append("/*C*/");
+	  builder->appendFormat("concat_%d_%d(",lbits,rbits);
+	  visit(e->left);
+	  builder->append(",");
+	  visit(e->right);
+	  builder->append(")");
+	}
+       else
+	{ builder->append("/*D*/");
+	  builder->append("(((");
+	  visit(e->left);
+	  builder->appendFormat(")<<%d)|(",rbits);
+	  visit(e->right);
+	  builder->append("))");
+	}
+       return(false);
+     }
+  }
+ builder->appendFormat("<<Mystery cast %s %s>>",e->left->type->toString(),e->right->type->toString());
+ return(false);
+}
+
 }  // namespace P4::TC

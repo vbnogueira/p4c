@@ -330,8 +330,8 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
   { switch (wrv[i].type)
      { case WR_VALUE:
 	  bld->newline();
-    	  bld->appendFormat("struct internal_bit%d {\n",wrv[i].value);
-	  bld->appendFormat("  u8 bits[%d]\n",(wrv[i].value+7)>>3);
+    	  bld->appendFormat("struct internal_bit_%d {\n",wrv[i].value);
+	  bld->appendFormat("  u8 bits[%d];\n",(wrv[i].value+7)>>3);
 	  bld->appendLine("};");
 	  break;
        case WR_CONCAT:
@@ -367,6 +367,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 {
  int i;
+ int j;
 
  bld->newline();
  bld->appendLine("// XXX Figure out a better place for these.");
@@ -375,18 +376,42 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
      { case WR_VALUE:
 	  break;
        case WR_CONCAT:
-	  bld->newline();
-	  bld->appendFormat("extern struct internal_bit_%d concat_%d_%d(",
-		wrv[i].concat.lhsw+wrv[i].concat.rhsw, wrv[i].concat.lhsw, wrv[i].concat.rhsw);
-	  if (wrv[i].concat.lhsw > 64) bld->appendFormat("struct internal_bit_%d",wrv[i].concat.lhsw);
-	  else                         bld->appendFormat("u64");
-	  bld->append(" lhs,");
-	  if (wrv[i].concat.rhsw > 64) bld->appendFormat("struct internal_bit_%d",wrv[i].concat.rhsw);
-	  else                         bld->appendFormat("u64");
-	  bld->append(" rhs)\n");
-	  bld->append("{\n");
-	  bld->append(" // XXX implement this!\n");
-	  bld->append("}\n");
+	   { auto lw = wrv[i].concat.lhsw;
+	     auto rw = wrv[i].concat.rhsw;
+	     bld->newline();
+	     bld->appendFormat("extern struct internal_bit_%d concat_%d_%d(",lw+rw,lw,rw);
+	     if (lw > 64) bld->appendFormat("struct internal_bit_%d",lw);
+	     else         bld->appendFormat("u64");
+	     bld->append(" lhs, ");
+	     if (rw > 64) bld->appendFormat("struct internal_bit_%u",rw);
+	     else         bld->appendFormat("u64");
+	     bld->append(" rhs)\n");
+	     bld->append("{\n"/*}*/);
+	     bld->appendFormat(" struct internal_bit_%u ret;\n",lw+rw);
+	     if (rw % 8)
+	      { bld->appendFormat(" // Not yet implemented for RHS width %u\n",rw);
+	      }
+	     else
+	      { if (rw > 64)
+		 { bld->appendFormat(" __builtin_memcpy(&ret.bits[0],&rhs.bits[0],%d);\n",rw>>3);
+		 }
+		else
+		 { for (j=0;j<rw;j+=8)
+		    { bld->appendFormat(" ret.bits[%d] = (rhs >> %d) & 255;\n",j>>3,j);
+		    }
+		 }
+	      }
+	     if (lw > 64)
+	      { bld->appendFormat(" __builtin_memcpy(&ret.bits[%d],&lhs.bits[0],%d);\n",rw>>3,(lw+7)>>3);
+	      }
+	     else
+	      { for (j=0;j<lw;j+=8)
+		 { bld->appendFormat(" ret.bits[%d] = (lhs >> %d) & %d;\n",(rw>>3)+(j>>3),j,((j+8)<=lw)?255:(255>>((j+8)-lw)));
+		 }
+	      }
+	     bld->append(" return(ret);\n");
+	     bld->append(/*{*/"}\n");
+	   }
 	  break;
        default:
 	  abort();
