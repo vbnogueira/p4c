@@ -2747,26 +2747,21 @@ EBPF::EBPFHashAlgorithmPSA *EBPFHashAlgorithmTypeFactoryPNA::create(
 
 bool ControlBodyTranslatorPNA::preorder(const IR::Concat *e)
 {
- builder->append("/*CONCAT*/");
  auto lt = e->left->type->to<IR::Type_Bits>();
  if (lt)
-  { builder->append("/*A*/");
-    auto rt = e->right->type->to<IR::Type_Bits>();
+  { auto rt = e->right->type->to<IR::Type_Bits>();
     if (rt)
-     { builder->append("/*B*/");
-       auto lbits = lt->width_bits();
+     { auto lbits = lt->width_bits();
        auto rbits = rt->width_bits();
        if (lbits+rbits > 64)
-	{ builder->append("/*C*/");
-	  builder->appendFormat("concat_%d_%d(",lbits,rbits);
+	{ builder->appendFormat("concat_%d_%d(",lbits,rbits);
 	  visit(e->left);
 	  builder->append(",");
 	  visit(e->right);
 	  builder->append(")");
 	}
        else
-	{ builder->append("/*D*/");
-	  builder->append("(((");
+	{ builder->append("(((");
 	  visit(e->left);
 	  builder->appendFormat(")<<%d)|(",rbits);
 	  visit(e->right);
@@ -2777,6 +2772,78 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Concat *e)
   }
  builder->appendFormat("<<Mystery cast %s %s>>",e->left->type->toString(),e->right->type->toString());
  return(false);
+}
+
+bool ControlBodyTranslatorPNA::arith_common(const IR::Operation_Binary *e, const char *smallop, const char *bigop)
+{
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt)
+  { auto rt = e->right->type->to<IR::Type_Bits>();
+    if (rt)
+     { auto lbits = lt->width_bits();
+       auto rbits = rt->width_bits();
+       if (lbits != rbits)
+	{ builder->appendFormat("<<Adding widths %d and %d>>",(int)lbits,(int)rbits);
+	}
+       else if (lbits <= 64)
+	{ visit(e->left);
+	  builder->appendFormat(" %s ",smallop);
+	  visit(e->right);
+	}
+       else
+	{ builder->appendFormat("%s_%u(",bigop,lbits);
+	  visit_hostorder(e->left);
+	  builder->append(", ");
+	  visit_hostorder(e->right);
+	  builder->append(")");
+	}
+       return(false);
+     }
+  }
+ builder->appendFormat("<<Mystery %s %s %s>>",bigop,e->left->type->toString(),e->right->type->toString());
+ return(false);
+}
+
+bool ControlBodyTranslatorPNA::big_x_small_mul(const IR::Expression *big, const IR::Constant *small)
+{
+ assert(big->type->is<IR::Type_Bits>());
+ auto bw = big->type->to<IR::Type_Bits>()->width_bits();
+ assert(bw > 64);
+ builder->appendFormat("bxsmul_%d_%u(",bw,static_cast<unsigned int>(small->value));
+ visit(big);
+ builder->appendFormat(")");
+ return(false);
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::Add *e)
+{
+ return(arith_common(e,"+","add"));
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::Sub *e)
+{
+ return(arith_common(e,"-","sub"));
+}
+
+bool ControlBodyTranslatorPNA::preorder(const IR::Mul *e)
+{
+ const IR::Constant *cx;
+
+ cx = e->left->to<IR::Constant>();
+ if (cx && (cx->value >= 0) && (cx->value < (1U<<22)))
+  { auto rt = e->right->type->to<IR::Type_Bits>();
+    if (rt && (rt->width_bits() > 64))
+     { return(big_x_small_mul(e->right,cx));
+     }
+  }
+ cx = e->right->to<IR::Constant>();
+ if (cx && (cx->value >= 0) && (cx->value < (1U<<22)))
+  { auto rt = e->left->type->to<IR::Type_Bits>();
+    if (rt && (rt->width_bits() > 64))
+     { return(big_x_small_mul(e->left,cx));
+     }
+  }
+ return(arith_common(e,"*","mul"));
 }
 
 }  // namespace P4::TC

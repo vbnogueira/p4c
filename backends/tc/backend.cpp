@@ -215,6 +215,18 @@ void SCAN_WIDTHS::dump() const
        case WR_CONCAT:
 	  std::cout << "CONCAT: " << wr->concat.lhsw << ' ' << wr->concat.rhsw;
 	  break;
+       case WR_ADD:
+	  std::cout << "ADD: " << wr->arith.w;
+	  break;
+       case WR_SUB:
+	  std::cout << "SUB: " << wr->arith.w;
+	  break;
+       case WR_MUL:
+	  std::cout << "MUL: " << wr->arith.w;
+	  break;
+       case WR_BXSMUL:
+	  std::cout << "BXSMUL: " << wr->bxsmul.bw << ' ' << wr->bxsmul.sv;
+	  break;
        default:
 	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
 	  break;
@@ -235,7 +247,7 @@ void SCAN_WIDTHS::end_apply(const IR::Node *n)
  std::cout << "SCAN_WIDTHS end_apply" << std::endl;
 }
 
-bool SCAN_WIDTHS::preorder(const IR::Expression *e)
+void SCAN_WIDTHS::expr_common(const IR::Expression *e)
 {
  const IR::Type *t;
 
@@ -245,6 +257,11 @@ bool SCAN_WIDTHS::preorder(const IR::Expression *e)
   { std::cout << "SCAN_WIDTHS preorder(" << e->toString() << "), type " << t << ", width " << t->width_bits() << std::endl;
     add_width(t->width_bits());
   }
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Expression *e)
+{
+ expr_common(e);
  return(true);
 }
 
@@ -252,8 +269,8 @@ bool SCAN_WIDTHS::preorder(const IR::Concat *e)
 {
  const IR::Type *lt;
  const IR::Type *rt;
- const IR::Type *ct;
 
+ expr_common(e);
  lt = typemap->getType(e->left,true);
  if (lt->is<IR::Type_Type>()) lt = lt->to<const IR::Type_Type>()->type;
  rt = typemap->getType(e->right,true);
@@ -263,14 +280,59 @@ bool SCAN_WIDTHS::preorder(const IR::Concat *e)
 	<< ") and " << rt << '(' << rt->width_bits() << ')' << std::endl;
     add_concat(lt->width_bits(),rt->width_bits());
   }
- // return(preorder(static_cast<const IR::Expression *>(e))) maybe?
- ct = typemap->getType(e,true);
- if (ct->is<IR::Type_Type>()) ct = ct->to<const IR::Type_Type>()->type;
- if (ct->is<IR::Type_Bits>())
-  { std::cout << "SCAN_WIDTHS preorder(" << e->toString() << "), concat type " << ct << ", width " << ct->width_bits() << std::endl;
-    add_width(ct->width_bits());
+ return(true);
+}
+
+bool SCAN_WIDTHS::arith_common(const IR::Operation_Binary *e, WRTYPE t, bool docommon)
+{
+ if (docommon) expr_common(e);
+ auto lt = e->left->type->to<IR::Type_Bits>();
+ if (lt)
+  { auto rt = e->right->type->to<IR::Type_Bits>();
+    if (rt && (lt->width_bits() == rt->width_bits()))
+     { add_arith(t,lt->width_bits());
+     }
   }
  return(true);
+}
+
+bool SCAN_WIDTHS::big_x_small_mul(const IR::Expression *big, const IR::Constant *small)
+{
+ auto bt = big->type->to<IR::Type_Bits>();
+ if (bt) add_bxsmul(bt->width_bits(),static_cast<unsigned int>(small->value));
+ return(true);
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Add *e)
+{
+ return(arith_common(e,WR_ADD));
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Sub *e)
+{
+ return(arith_common(e,WR_SUB));
+}
+
+bool SCAN_WIDTHS::preorder(const IR::Mul *e)
+{
+ const IR::Constant *cx;
+
+ expr_common(e);
+ cx = e->left->to<IR::Constant>();
+ if (cx && (cx->value >= 0) && (cx->value < (1U<<22)))
+  { auto rt = e->right->type->to<IR::Type_Bits>();
+    if (rt && (rt->width_bits() > 64))
+     { return(big_x_small_mul(e->right,cx));
+     }
+  }
+ cx = e->right->to<IR::Constant>();
+ if (cx && (cx->value >= 0) && (cx->value < (1U<<22)))
+  { auto rt = e->left->type->to<IR::Type_Bits>();
+    if (rt && (rt->width_bits() > 64))
+     { return(big_x_small_mul(e->left,cx));
+     }
+  }
+ return(arith_common(e,WR_MUL,false));
 }
 
 // There's _got_ to be a C++ standard object that can do this better.
@@ -320,9 +382,33 @@ void SCAN_WIDTHS::add_concat(int lw, int rw)
  insert_wr(wr);
 }
 
+void SCAN_WIDTHS::add_arith(WRTYPE t, int w)
+{
+ WIDTH_REC wr;
+
+ assert((w>0)&&(w<1048576));
+ if (w <= 64) return;
+ wr.type = t;
+ wr.arith.w = w;
+ insert_wr(wr);
+}
+
+void SCAN_WIDTHS::add_bxsmul(int bw, unsigned int sv)
+{
+ WIDTH_REC wr;
+
+ assert((bw>0)&&(bw<1048576)&&(sv<(1U<<22)));
+ if (bw <= 64) return;
+ wr.type = WR_BXSMUL;
+ wr.bxsmul.bw = bw;
+ wr.bxsmul.sv = sv;
+ insert_wr(wr);
+}
+
 void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 {
  int i;
+ const char *opname;
 
  bld->appendLine("// These do not belong in the *_parser.h file!");
  bld->appendLine("// XXX Figure out a better place for them.");
@@ -335,6 +421,10 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  bld->appendLine("};");
 	  break;
        case WR_CONCAT:
+       case WR_ADD:
+       case WR_SUB:
+       case WR_MUL:
+       case WR_BXSMUL:
 	  break;
        default:
 	  abort();
@@ -357,6 +447,30 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  else                         bld->appendFormat("u64");
 	  bld->append(");\n");
 	  break;
+       case WR_ADD:
+	  opname = "add";
+	  if (0)
+	   {
+       case WR_SUB:
+	     opname = "sub";
+	   }
+	  if (0)
+	   {
+       case WR_MUL:
+	     opname = "mul";
+	   }
+	  bld->newline();
+	  assert(wrv[i].arith.w > 64);
+	  bld->appendFormat("extern struct internal_bit_%d %s_%d(struct internal_bit_%d, struct internal_bit_%d);\n",
+		wrv[i].arith.w, opname, wrv[i].arith.w, wrv[i].arith.w, wrv[i].arith.w);
+	  break;
+       case WR_BXSMUL:
+	  bld->newline();
+	  assert(wrv[i].bxsmul.bw > 64);
+	  assert(wrv[i].bxsmul.sv < (1U<<22));
+	  bld->appendFormat("extern struct internal_bit_%d bxsmul_%d_%u(struct internal_bit_%d);\n",
+		wrv[i].bxsmul.bw, wrv[i].bxsmul.bw, wrv[i].bxsmul.sv, wrv[i].bxsmul.bw);
+	  break;
        default:
 	  abort();
 	  break;
@@ -368,6 +482,7 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 {
  int i;
  int j;
+ int k;
 
  bld->newline();
  bld->appendLine("// XXX Figure out a better place for these.");
@@ -378,8 +493,7 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
        case WR_CONCAT:
 	   { auto lw = wrv[i].concat.lhsw;
 	     auto rw = wrv[i].concat.rhsw;
-	     bld->newline();
-	     bld->appendFormat("extern struct internal_bit_%d concat_%d_%d(",lw+rw,lw,rw);
+	     bld->appendFormat("struct internal_bit_%d concat_%d_%d(",lw+rw,lw,rw);
 	     if (lw > 64) bld->appendFormat("struct internal_bit_%d",lw);
 	     else         bld->appendFormat("u64");
 	     bld->append(" lhs, ");
@@ -388,6 +502,7 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	     bld->append(" rhs)\n");
 	     bld->append("{\n"/*}*/);
 	     bld->appendFormat(" struct internal_bit_%u ret;\n",lw+rw);
+	     bld->append("\n");
 	     if (rw % 8)
 	      { bld->appendFormat(" // Not yet implemented for RHS width %u\n",rw);
 	      }
@@ -413,6 +528,89 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	     bld->append(/*{*/"}\n");
 	   }
 	  break;
+       case WR_ADD:
+	   { unsigned int w = wrv[i].arith.w;
+	     int b = (w + 7) >> 3;
+	     bld->newline();
+	     bld->appendFormat("struct internal_bit_%d add_%d(struct internal_bit_%d lhs, struct internal_bit_%d rhs)\n",w,w,w,w);
+	     bld->append("{\n"/*}*/);
+	     bld->appendFormat(" struct internal_bit_%d ret;\n",w);
+	     // really need only u9, but can't count on that existing, ugh
+	     bld->append(" u16 a;\n");
+	     bld->append("\n");
+	     for (j=0;j<b;j++)
+	      { bld->appendFormat(" a = lhs->bits[%d] + rhs->bits[%d]%s;\n",j,j,j?" + (a >> 8)":"");
+		bld->appendFormat(" ret.bits[%d] = a & ",j);
+		if (j+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-w));
+		bld->append(";\n");
+	      }
+	     bld->append(" return(ret);\n");
+	     bld->append(/*{*/"}\n");
+	   }
+	  break;
+       case WR_SUB:
+	   { unsigned int w = wrv[i].arith.w;
+	     int b = (w + 7) >> 3;
+	     bld->newline();
+	     bld->appendFormat("struct internal_bit_%d sub_%d(struct internal_bit_%d lhs, struct internal_bit_%d rhs)\n",w,w,w,w);
+	     bld->append("{\n"/*}*/);
+	     bld->appendFormat(" struct internal_bit_%d ret;\n",w);
+	     // really need only u9, but can't count on that existing, ugh
+	     bld->append(" u16 a;\n");
+	     bld->append("\n");
+	     for (j=0;j<b;j++)
+	      { bld->appendFormat(" a = lhs->bits[%d] - rhs->bits[%d]%s;\n",j,j,j?" - ((a >> 8) & 1)":"");
+		bld->appendFormat(" ret.bits[%d] = a & ",j);
+		if (j+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-w));
+		bld->append(";\n");
+	      }
+	     bld->append(" return(ret);\n");
+	     bld->append(/*{*/"}\n");
+	   }
+	  break;
+       case WR_MUL:
+	   { unsigned int w = wrv[i].arith.w;
+	     int b = (w + 7) >> 3;
+	     bld->newline();
+	     bld->appendFormat("struct internal_bit_%d mul_%d(struct internal_bit_%d lhs, struct internal_bit_%d rhs)\n",w,w,w,w);
+	     bld->append("{\n"/*}*/);
+	     bld->appendFormat(" struct internal_bit_%d ret;\n",w);
+	     bld->append(" u32 a;\n");
+	     bld->append("\n");
+	     for (j=0;j<b;j++)
+	      { bld->appendFormat(" a =%s",j?" (a >> 8) +":"");
+		for (k=j;k>=0;k--)
+		 { bld->appendFormat(" (lhs->bits[%d] * rhs->bits[%d])%s",k,j-k,k?" +":"");
+		 }
+		bld->append(";\n");
+		bld->appendFormat(" ret.bits[%d] = a & ",j);
+		if (j+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-w));
+		bld->append(";\n");
+	      }
+	     bld->append(" return(ret);\n");
+	     bld->append(/*{*/"}\n");
+	   }
+	  break;
+       case WR_BXSMUL:
+	   { unsigned int bw = wrv[i].bxsmul.bw;
+	     unsigned int sv = wrv[i].bxsmul.sv;
+	     int b = (bw + 7) >> 3;
+	     bld->newline();
+	     bld->appendFormat("struct internal_bit_%d bxsmul_%d_%u(struct internal_bit_%d arg)\n",bw,bw,sv,bw,bw);
+	     bld->append("{\n"/*}*/);
+	     bld->appendFormat(" struct internal_bit_%d ret;\n",bw);
+	     bld->append(" u32 a;\n");
+	     bld->append("\n");
+	     for (j=0;j<b;j++)
+	      { bld->appendFormat(" a =%s (arg->bits[%d] * %u);\n",j?" (a >> 8) +":"",j,sv);
+		bld->appendFormat(" ret.bits[%d] = a & ",j);
+		if (j+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-bw));
+		bld->append(";\n");
+	      }
+	     bld->append(" return(ret);\n");
+	     bld->append(/*{*/"}\n");
+	   }
+	  break;
        default:
 	  abort();
 	  break;
@@ -430,6 +628,7 @@ bool Backend::process() {
     auto typeMapEBPF = typeMap;
     auto hook = options.getDebugHook();
     SCAN_WIDTHS *sw = new SCAN_WIDTHS(typeMap);
+ std::cout << "Created SCAN_WIDTHS " << (void *)sw << std::endl;
     parseTCAnno = new ParseTCAnnotations();
     tcIR = new ConvertToBackendIR(toplevel, pipeline, refMap, typeMap, options);
     genIJ = new IntrospectionGenerator(pipeline, refMap, typeMap);

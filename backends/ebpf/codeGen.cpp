@@ -37,10 +37,10 @@ bool CodeGenInspector::preorder(const IR::Constant *expression) {
     }
 
     cstring str = EBPFInitializerUtils::genHexStr(expression->value, width, expression);
-    builder->appendFormat("(struct internal_bit_%u){{ "/*}}*/,width);
+    builder->appendFormat("(struct internal_bit_%u){{"/*}}*/,width);
     for (size_t i = 0; i < str.size() / 2; ++i)
-        builder->appendFormat("0x%v, ", str.substr(2 * i, 2));
-    builder->append(/*{{*/"}}");
+        builder->appendFormat("%s 0x%v", i ? "," : "", str.substr(2 * i, 2));
+    builder->append(/*{{*/" }}");
 
     return false;
 }
@@ -82,7 +82,7 @@ bool CodeGenInspector::preorder(const IR::Operation_Binary *b) {
     if (mask != "") builder->append("(");
     if (useParens) builder->append("(");
     if (builder->target->name == "P4TC") {
-        emitTCBinaryOperation(b, true);
+        emitTCBinaryOperation(b);
     } else {
         visit(b->left);
         builder->spc();
@@ -110,7 +110,7 @@ bool CodeGenInspector::comparison(const IR::Operation_Relation *b) {
         bool useParens = prec > b->getPrecedence();
         if (useParens) builder->append("(");
         if (builder->target->name == "P4TC") {
-            emitTCBinaryOperation(b, scalar);
+            emitTCBinaryOperation(b);
         } else {
             visit(b->left);
             builder->spc();
@@ -125,7 +125,7 @@ bool CodeGenInspector::comparison(const IR::Operation_Relation *b) {
         unsigned width = et->to<IHasWidth>()->implementationWidthInBits();
         builder->append("memcmp(&");
         if (builder->target->name == "P4TC") {
-            emitTCBinaryOperation(b, scalar);
+            emitTCBinaryOperation(b);
         } else {
             visit(b->left);
             builder->append(", &");
@@ -344,9 +344,10 @@ bool CodeGenInspector::preorder(const IR::Type_Enum *type) {
 
 void CodeGenInspector::emitAssignStatement(const IR::Type *ltype, const IR::Expression *lexpr,
                                            cstring lpath, const IR::Expression *rexpr) {
-(void)ltype;
+    (void)ltype;
     builder->emitIndent();
-    if (lexpr == nullptr) builder->appendFormat("/* lexpr = nil, lpath %s */",lpath); else builder->appendFormat("/* lexpr = %s */",lexpr->toString());
+    if (lexpr == nullptr) builder->appendFormat("/* lexpr = nil, lpath %s */",lpath?lpath:"nil"_cs);
+    else                  builder->appendFormat("/* lexpr = %s */",lexpr->toString());
     builder->newline();
     builder->emitIndent();
     builder->appendFormat("/* rexpr = %s */",rexpr->toString());
@@ -492,21 +493,32 @@ void CodeGenInspector::emitAndConvertByteOrder(const IR::Expression *expr, cstri
     builder->append(")");
 }
 
-void CodeGenInspector::emitTCBinaryOperation(const IR::Operation_Binary *b, bool isScalar) {
-    const IR::Expression *lexpr = b->left;
-    const IR::Expression *rexpr = b->right;
-    cstring stringop = b->getStringOp();
+void CodeGenInspector::emit_tc_large(const IR::Operation_Binary *b, unsigned int width)
+{
+ // XXX do this better
+ builder->appendFormat("\n// XXX Don't yet handle %s on %s-bit values\n",b->getStringOp(),width);
+}
 
-builder->append("/*TCBO*/");
-    auto action = findContext<IR::P4Action>();
-    auto tcTarget = dynamic_cast<const P4TCTarget *>(builder->target);
-    cstring lByteOrder = "HOST"_cs, rByteOrder = "HOST"_cs;
-    if (lexpr) {
-        lByteOrder = tcTarget->getByteOrder(typeMap, action, lexpr);
-    }
-    if (rexpr) {
-        rByteOrder = tcTarget->getByteOrder(typeMap, action, rexpr);
-    }
+void CodeGenInspector::visit_hostorder(const IR::Expression *e)
+{
+ auto bo = dynamic_cast<const P4TCTarget *>(builder->target)->getByteOrder(typeMap,findContext<IR::P4Action>(),e);
+ if (bo == "NETWORK")
+  { emitAndConvertByteOrder(e,bo);
+  }
+ else
+  { visit(e);
+  }
+}
+
+#if 0
+
+void CodeGenInspector::emit_tc_large(const IR::Add_Binary *b)
+{
+ // XXX do something better than this!
+ builder->appendFormat("\n// XXX Don't yet handle %s on %d-bit values\n",b->getStringOp(),
+	dynamic_cast<IHasWidth *>(EBPFTypeFactory::instance->create(typeMap->getType(b)))->widthInBits());
+}
+
     if (lByteOrder == rByteOrder) {
         getBitAlignment(lexpr);
         if (isScalar) {
@@ -560,7 +572,37 @@ builder->append("/*TCBO*/");
             emitAndConvertByteOrder(rexpr, "NETWORK"_cs);
         }
     }
-    return;
+
+#endif
+
+void CodeGenInspector::emitTCBinaryOperation(const IR::Operation_Binary *b) {
+    const IR::Expression *lexpr = b->left;
+    const IR::Expression *rexpr = b->right;
+    cstring stringop = b->getStringOp();
+    auto type = typeMap->getType(b);
+    auto width = dynamic_cast<IHasWidth *>(EBPFTypeFactory::instance->create(typeMap->getType(b)))->widthInBits();
+    if (!type->is<EBPFBoolType>() && (width > 64)) {
+       emit_tc_large(b,width);
+       return;
+    }
+    builder->append("/*TCBO*/");
+    auto action = findContext<IR::P4Action>();
+    auto tcTarget = dynamic_cast<const P4TCTarget *>(builder->target);
+    cstring lByteOrder = "HOST"_cs, rByteOrder = "HOST"_cs;
+    if (lexpr)
+        lByteOrder = tcTarget->getByteOrder(typeMap, action, lexpr);
+    if (rexpr)
+        rByteOrder = tcTarget->getByteOrder(typeMap, action, rexpr);
+    if ((width <= 8) || (lByteOrder == "HOST"))
+       visit(lexpr);
+    emitAndConvertByteOrder(lexpr,"NETWORK"_cs);
+    builder->spc();
+    builder->append(stringop);
+    builder->spc();
+    if ((width <= 8) || (rByteOrder == "HOST"))
+       visit(rexpr);
+    else
+       emitAndConvertByteOrder(rexpr,"NETWORK"_cs);
 }
 
 void CodeGenInspector::emitTCAssignmentEndianessConversion(const IR::Type *ltype,

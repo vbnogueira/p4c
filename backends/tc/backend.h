@@ -80,18 +80,33 @@ class FIXUP_CASTS : public Transform {
 enum WRTYPE {
   WR_VALUE = 1,
   WR_CONCAT,
+  WR_ADD,
+  WR_SUB,
+  WR_MUL,
+  WR_BXSMUL,
   } ;
 
 class WIDTH_REC {
   public:
     WRTYPE type;
     union {
-      int value;	// if WR_VALUE
-      struct {		// if WR_CONCAT
+      // if WR_VALUE
+      int value;
+      // if WR_CONCAT
+      struct {
 	int lhsw;
 	int rhsw;
 	// result width is implicit: is lhsw + rhsw
 	} concat;
+      // if WR_ADD, WR_SUB, WR_MUL
+      struct {
+	int w;
+	} arith;
+      // if WR_BXSMUL
+      struct {
+	int bw;
+	unsigned int sv;
+	} bxsmul;
       } ;
   public:
     friend bool operator<(const WIDTH_REC &l, const WIDTH_REC &r)
@@ -105,6 +120,16 @@ class WIDTH_REC {
 		     ( (l.concat.lhsw == r.concat.lhsw) &&
 		       (l.concat.rhsw < r.concat.rhsw) ) );
 	     break;
+	  case WR_ADD:
+	  case WR_SUB:
+	  case WR_MUL:
+	     return(l.arith.w<r.arith.w);
+	     break;
+	  case WR_BXSMUL:
+	     return( (l.bxsmul.bw < r.bxsmul.bw) ||
+		     ( (l.bxsmul.bw == r.bxsmul.bw) &&
+		       (l.bxsmul.sv < r.bxsmul.sv) ) );
+	     break;
 	}
        return(0);
      }
@@ -116,6 +141,14 @@ class WIDTH_REC {
 	     break;
 	  case WR_CONCAT:
 	     return((l.concat.lhsw==r.concat.lhsw)&&(l.concat.rhsw)==(r.concat.rhsw));
+	     break;
+	  case WR_ADD:
+	  case WR_SUB:
+	  case WR_MUL:
+	     return(l.arith.w==r.arith.w);
+	     break;
+	  case WR_BXSMUL:
+	     return((l.bxsmul.bw==r.bxsmul.bw)&&(l.bxsmul.sv==r.bxsmul.sv));
 	     break;
 	}
        return(1);
@@ -134,11 +167,19 @@ class SCAN_WIDTHS : public Inspector {
     void insert_wr(WIDTH_REC &);
     void add_width(int);
     void add_concat(int, int);
+    void add_arith(WRTYPE, int);
+    void add_bxsmul(int, unsigned int);
+    bool big_x_small_mul(const IR::Expression *, const IR::Constant *);
   public:
     explicit SCAN_WIDTHS(P4::TypeMap *tm) : nwr(0), wrv(0), typemap(tm) { }
     ~SCAN_WIDTHS(void) { std::free(wrv); }
+    void expr_common(const IR::Expression *);
     virtual bool preorder(const IR::Expression *) override;
     virtual bool preorder(const IR::Concat *) override;
+    virtual bool preorder(const IR::Add *) override;
+    virtual bool preorder(const IR::Sub *) override;
+    virtual bool preorder(const IR::Mul *) override;
+    bool arith_common(const IR::Operation_Binary *, WRTYPE, bool = true);
     profile_t init_apply(const IR::Node *) override;
     void end_apply(const IR::Node *) override;
     void revisit_visited();
