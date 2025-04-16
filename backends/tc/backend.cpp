@@ -400,11 +400,279 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
   }
 }
 
+static void gen_concat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int lw;
+ unsigned int rw;
+ unsigned int i;
+
+ assert(wr->type == WR_CONCAT);
+ lw = wr->concat.lhsw;
+ rw = wr->concat.rhsw;
+ bld->newline();
+ bld->appendFormat("struct internal_bit_%u concat_%u_%u(",lw+rw,lw,rw);
+ append_type_for_width(bld,lw);
+ bld->append(" lhs, ");
+ append_type_for_width(bld,rw);
+ bld->append(" rhs)\n");
+ bld->append("{\n"/*}*/);
+ bld->appendFormat(" struct internal_bit_%u ret;\n",lw+rw);
+ bld->append("\n");
+ if (rw % 8)
+  { bld->appendFormat(" // Not yet implemented for RHS width %u\n",rw);
+  }
+ else
+  { if (rw > 64)
+     { bld->appendFormat(" __builtin_memcpy(&ret.bits[0],&rhs.bits[0],%u);\n",rw>>3);
+     }
+    else
+     { for (i=0;i<rw;i+=8)
+	{ bld->appendFormat(" ret.bits[%u] = (rhs >> %u) & 255;\n",i>>3,i);
+	}
+     }
+  }
+ if (lw > 64)
+  { bld->appendFormat(" __builtin_memcpy(&ret.bits[%u],&lhs.bits[0],%u);\n",rw>>3,(lw+7)>>3);
+  }
+ else
+  { for (i=0;i<lw;i+=8)
+     { bld->appendFormat(" ret.bits[%u] = (lhs >> %u) & %u;\n",(rw>>3)+(i>>3),i,((i+8)<=lw)?255:(255>>((i+8)-lw)));
+     }
+  }
+ bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_add(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int w;
+ unsigned int b;
+ unsigned int i;
+
+ assert(wr->type == WR_ADD);
+ w = wr->arith.w;
+ b = (w + 7) >> 3;
+ bld->newline();
+ bld->appendFormat("struct internal_bit_%u add_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
+ bld->append("{\n"/*}*/);
+ bld->appendFormat(" struct internal_bit_%u ret;\n",w);
+ // really need only u9, but can't count on that existing, ugh
+ bld->append(" u16 a;\n");
+ bld->append("\n");
+ for (i=0;i<b;i++)
+  { bld->appendFormat(" a = lhs->bits[%u] + rhs->bits[%u]%s;\n",i,i,i?" + (a >> 8)":"");
+    bld->appendFormat(" ret.bits[%u] = a & ",i);
+    if (i+1 < b) bld->append("255"); else bld->appendFormat("%u",255>>((b*8)-w));
+    bld->append(";\n");
+  }
+ bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_sub(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int w;
+ unsigned int b;
+ unsigned int i;
+
+ assert(wr->type == WR_SUB);
+ w = wr->arith.w;
+ b = (w + 7) >> 3;
+ bld->newline();
+ bld->appendFormat("struct internal_bit_%u sub_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
+ bld->append("{\n"/*}*/);
+ bld->appendFormat(" struct internal_bit_%u ret;\n",w);
+ // really need only u9, but can't count on that existing, ugh
+ // (tho, in theory, can't count on u16 existing either)
+ bld->append(" u16 a;\n");
+ bld->append("\n");
+ for (i=0;i<b;i++)
+  { bld->appendFormat(" a = lhs->bits[%u] - rhs->bits[%u]%s;\n",i,i,i?" - ((a >> 8) & 1)":"");
+    bld->appendFormat(" ret.bits[%u] = a & ",i);
+    if (i+1 < b) bld->append("255"); else bld->appendFormat("%u",255>>((b*8)-w));
+    bld->append(";\n");
+  }
+ bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_mul(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int w;
+ unsigned int b;
+ unsigned int i;
+ int j;
+
+ assert(wr->type == WR_MUL);
+ w = wr->arith.w;
+ b = (w + 7) >> 3;
+ bld->newline();
+ bld->appendFormat("struct internal_bit_%u mul_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
+ bld->append("{\n"/*}*/);
+ bld->appendFormat(" struct internal_bit_%u ret;\n",w);
+ bld->append(" u32 a;\n");
+ bld->append("\n");
+ for (i=0;i<b;i++)
+  { bld->appendFormat(" a =%s",i?" (a >> 8) +":"");
+    for (j=i;j>=0;j--)
+     { bld->appendFormat(" (lhs->bits[%d] * rhs->bits[%d])%s",j,(int)i-j,j?" +":"");
+     }
+    bld->append(";\n");
+    bld->appendFormat(" ret.bits[%u] = a & ",i);
+    if (i+1 < b) bld->append("255"); else bld->appendFormat("%u",255U>>((b*8)-w));
+    bld->append(";\n");
+  }
+ bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_bxsmul(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int bw;
+ unsigned int sv;
+ unsigned int b;
+ unsigned int i;
+
+ assert(wr->type == WR_BXSMUL);
+ bw = wr->bxsmul.bw;
+ sv = wr->bxsmul.sv;
+ b = (bw + 7) >> 3;
+ bld->newline();
+ bld->appendFormat("struct internal_bit_%u bxsmul_%u_%u(struct internal_bit_%u arg)\n",bw,bw,sv,bw,bw);
+ bld->append("{\n"/*}*/);
+ bld->appendFormat(" struct internal_bit_%u ret;\n",bw);
+ bld->append(" u32 a;\n");
+ bld->append("\n");
+ for (i=0;i<b;i++)
+  { bld->appendFormat(" a =%s (arg->bits[%u] * %u);\n",i?" (a >> 8) +":"",i,sv);
+    bld->appendFormat(" ret.bits[%u] = a & ",i);
+    if (i+1 < b) bld->append("255"); else bld->appendFormat("%u",255U>>((b*8)-bw));
+    bld->append(";\n");
+  }
+ bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_cast(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int fw;
+ unsigned int tw;
+ int fb1;
+ int tb1;
+ int fb2;
+ int tb2;
+
+ assert(wr->type == WR_CAST);
+ fw = wr->cast.fw;
+ tw = wr->cast.tw;
+ fb1 = fw >> 3;
+ tb1 = tw >> 3;
+ fb2 = (fw + 7) >> 3;
+ tb2 = (tw + 7) >> 3;
+ assert(((fw>64)||(tw>64))&&(fw!=tw));
+ bld->newline();
+ append_type_for_width(bld,tw);
+ bld->appendFormat(" cast_%d_to_%u(",fw,tw);
+ append_type_for_width(bld,fw);
+ bld->append(" arg)\n");
+ bld->append("{\n"/*}*/);
+ if (tw > 64)
+  { bld->appendFormat(" struct internal_bit_%d ret;\n",tw);
+    bld->append("\n");
+    if (fw > 64)
+     { // Copy as many full bytes as both widths contain
+       bld->appendFormat(" __builtin_memcpy(&ret.bits[0],&arg.bits[0],%d);\n",(fb1<tb1)?fb1:tb1);
+       if (tw > fw)
+	{ // If we are widening...
+	  // Handle trailing partial source byte, if present.
+	  if (fb2 != fb1) bld->appendFormat(" ret.bits[%d] = arg.bits[%d] & %d;\n",fb1,fb1,~((~0U)<<(fw&7)));
+	  // Zero any further destination bytes.
+	  if (tb2 > fb2) bld->appendFormat(" __builtin_memset(&ret.bits[%d],%d);\n",fb2,tb2-fb2);
+	}
+       else
+	{ // If we are narrowing...
+	  // Copy trailing partial byte, if present.
+	  if (tb2 != tb1) bld->appendFormat(" ret.bits[%d] = arg.bits[%d] & %d;\n",tb1,tb1,~((~0U)<<(tw&7)));
+	}
+     }
+    else
+     { if (fw < 64) bld->appendFormat(" arg &= 0x%xULL;\n",(1ULL<<fw)-1);
+       for (int i=7;i>=0;i--) bld->appendFormat(" ret.bits[%d] = (arg >> %d) & 255;\n",i,i*8);
+       bld->appendFormat(" __builtin_memset(&ret.bits[8],%d);\n",((tw+7)>>3)-8);
+     }
+  }
+ else
+  { bld->appendFormat(" u64 ret;\n");
+    bld->append("\n");
+    // know fw>64 from assert above, since tw<=64 here
+    const char *pref = " ret = ";
+    if (tw & 7)
+     { bld->appendFormat("%s((arg->bits[%d] & (u64)%u) << %d)",pref,tw>>3,(1U<<(tw&7))-1,tw&~7U);
+       pref = " |\n       ";
+     }
+    for (int i=(tw>>3)-1;i>=0;i--)
+     { bld->appendFormat("%s(((u64)arg->bits[%d]) << %d)",i,i*3);
+       pref = " |\n       ";
+     }
+    bld->append(";\n");
+  }
+ bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_neg(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int w;
+ int i;
+ int j;
+
+ assert(wr->type == WR_NEG);
+ w = wr->arith.w;
+ assert(w > 64);
+ bld->newline();
+ bld->appendFormat("struct internal_bit_%u neg_%u(struct internal_bit_%u arg)\n",w,w,w);
+ bld->append("{\n"/*}*/);
+ bld->append(" u16 a;\n");
+ bld->appendFormat(" struct internal_bit_%u ret;\n",w);
+ bld->append("\n");
+ for (i=(w>>3)-1,j=0;i>=0;i--,j++)
+  { bld->appendFormat(" a = %s + (255 ^ arg->bits[%d]);\n",j?"(a >> 8)":"1",j);
+    bld->appendFormat(" ret->bits[%d] = a & 255;\n",j);
+  }
+ if (w & 7)
+  { bld->appendFormat(" ret->bits[%d] = (%s + (255 ^ arg->bits[%d])) & %d;\n",j?"(a >> 8)":"1",j,j,(1<<(w&7))-1);
+  }
+ bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_not(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int w;
+ int i;
+ int j;
+
+ assert(wr->type == WR_NOT);
+ w = wr->arith.w;
+ assert(w > 64);
+ bld->newline();
+ bld->appendFormat("struct internal_bit_%u not_%u(struct internal_bit_%d arg)\n",w,w,w);
+ bld->append("{\n"/*}*/);
+ bld->append(" u16 a;\n");
+ bld->append("\n");
+ for (i=(w>>3)-1,j=0;i>=0;i--,j++)
+  { bld->appendFormat(" ret->bits[%d] = ~arg->bits[%d];\n",j,j);
+  }
+ if (w & 7)
+  { bld->appendFormat(" ret->bits[%d] = arg->bits[%d] ^ %d;\n",j,j,(1<<(w&7))-1);
+  }
+ bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
 void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 {
  int i;
- int j;
- int k;
 
  bld->newline();
  bld->appendLine("// XXX Figure out a better place for these.");
@@ -413,224 +681,28 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
      { case WR_VALUE:
 	  break;
        case WR_CONCAT:
-	   { auto lw = wrv[i].concat.lhsw;
-	     auto rw = wrv[i].concat.rhsw;
-	     bld->newline();
-	     bld->appendFormat("struct internal_bit_%d concat_%d_%d(",lw+rw,lw,rw);
-	     append_type_for_width(bld,lw);
-	     bld->append(" lhs, ");
-	     append_type_for_width(bld,rw);
-	     bld->append(" rhs)\n");
-	     bld->append("{\n"/*}*/);
-	     bld->appendFormat(" struct internal_bit_%u ret;\n",lw+rw);
-	     bld->append("\n");
-	     if (rw % 8)
-	      { bld->appendFormat(" // Not yet implemented for RHS width %u\n",rw);
-	      }
-	     else
-	      { if (rw > 64)
-		 { bld->appendFormat(" __builtin_memcpy(&ret.bits[0],&rhs.bits[0],%d);\n",rw>>3);
-		 }
-		else
-		 { for (j=0;j<rw;j+=8)
-		    { bld->appendFormat(" ret.bits[%d] = (rhs >> %d) & 255;\n",j>>3,j);
-		    }
-		 }
-	      }
-	     if (lw > 64)
-	      { bld->appendFormat(" __builtin_memcpy(&ret.bits[%d],&lhs.bits[0],%d);\n",rw>>3,(lw+7)>>3);
-	      }
-	     else
-	      { for (j=0;j<lw;j+=8)
-		 { bld->appendFormat(" ret.bits[%d] = (lhs >> %d) & %d;\n",(rw>>3)+(j>>3),j,((j+8)<=lw)?255:(255>>((j+8)-lw)));
-		 }
-	      }
-	     bld->append(" return(ret);\n");
-	     bld->append(/*{*/"}\n");
-	   }
+	  gen_concat(bld,&wrv[i]);
 	  break;
        case WR_ADD:
-	   { unsigned int w = wrv[i].arith.w;
-	     int b = (w + 7) >> 3;
-	     bld->newline();
-	     bld->appendFormat("struct internal_bit_%d add_%d(struct internal_bit_%d lhs, struct internal_bit_%d rhs)\n",w,w,w,w);
-	     bld->append("{\n"/*}*/);
-	     bld->appendFormat(" struct internal_bit_%d ret;\n",w);
-	     // really need only u9, but can't count on that existing, ugh
-	     bld->append(" u16 a;\n");
-	     bld->append("\n");
-	     for (j=0;j<b;j++)
-	      { bld->appendFormat(" a = lhs->bits[%d] + rhs->bits[%d]%s;\n",j,j,j?" + (a >> 8)":"");
-		bld->appendFormat(" ret.bits[%d] = a & ",j);
-		if (j+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-w));
-		bld->append(";\n");
-	      }
-	     bld->append(" return(ret);\n");
-	     bld->append(/*{*/"}\n");
-	   }
+	  gen_add(bld,&wrv[i]);
 	  break;
        case WR_SUB:
-	   { unsigned int w = wrv[i].arith.w;
-	     int b = (w + 7) >> 3;
-	     bld->newline();
-	     bld->appendFormat("struct internal_bit_%d sub_%d(struct internal_bit_%d lhs, struct internal_bit_%d rhs)\n",w,w,w,w);
-	     bld->append("{\n"/*}*/);
-	     bld->appendFormat(" struct internal_bit_%d ret;\n",w);
-	     // really need only u9, but can't count on that existing, ugh
-	     bld->append(" u16 a;\n");
-	     bld->append("\n");
-	     for (j=0;j<b;j++)
-	      { bld->appendFormat(" a = lhs->bits[%d] - rhs->bits[%d]%s;\n",j,j,j?" - ((a >> 8) & 1)":"");
-		bld->appendFormat(" ret.bits[%d] = a & ",j);
-		if (j+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-w));
-		bld->append(";\n");
-	      }
-	     bld->append(" return(ret);\n");
-	     bld->append(/*{*/"}\n");
-	   }
+	  gen_sub(bld,&wrv[i]);
 	  break;
        case WR_MUL:
-	   { unsigned int w = wrv[i].arith.w;
-	     int b = (w + 7) >> 3;
-	     bld->newline();
-	     bld->appendFormat("struct internal_bit_%d mul_%d(struct internal_bit_%d lhs, struct internal_bit_%d rhs)\n",w,w,w,w);
-	     bld->append("{\n"/*}*/);
-	     bld->appendFormat(" struct internal_bit_%d ret;\n",w);
-	     bld->append(" u32 a;\n");
-	     bld->append("\n");
-	     for (j=0;j<b;j++)
-	      { bld->appendFormat(" a =%s",j?" (a >> 8) +":"");
-		for (k=j;k>=0;k--)
-		 { bld->appendFormat(" (lhs->bits[%d] * rhs->bits[%d])%s",k,j-k,k?" +":"");
-		 }
-		bld->append(";\n");
-		bld->appendFormat(" ret.bits[%d] = a & ",j);
-		if (j+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-w));
-		bld->append(";\n");
-	      }
-	     bld->append(" return(ret);\n");
-	     bld->append(/*{*/"}\n");
-	   }
+	  gen_mul(bld,&wrv[i]);
 	  break;
        case WR_BXSMUL:
-	   { unsigned int bw = wrv[i].bxsmul.bw;
-	     unsigned int sv = wrv[i].bxsmul.sv;
-	     int b = (bw + 7) >> 3;
-	     bld->newline();
-	     bld->appendFormat("struct internal_bit_%d bxsmul_%d_%u(struct internal_bit_%d arg)\n",bw,bw,sv,bw,bw);
-	     bld->append("{\n"/*}*/);
-	     bld->appendFormat(" struct internal_bit_%d ret;\n",bw);
-	     bld->append(" u32 a;\n");
-	     bld->append("\n");
-	     for (j=0;j<b;j++)
-	      { bld->appendFormat(" a =%s (arg->bits[%d] * %u);\n",j?" (a >> 8) +":"",j,sv);
-		bld->appendFormat(" ret.bits[%d] = a & ",j);
-		if (j+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-bw));
-		bld->append(";\n");
-	      }
-	     bld->append(" return(ret);\n");
-	     bld->append(/*{*/"}\n");
-	   }
+	  gen_bxsmul(bld,&wrv[i]);
 	  break;
        case WR_CAST:
-	   { unsigned int fw = wrv[i].cast.fw;
-	     unsigned int tw = wrv[i].cast.tw;
-	     assert(((fw>64)||(tw>64))&&(fw!=tw));
-	     int fb1 = fw >> 3;
-	     int tb1 = tw >> 3;
-	     int fb2 = (fw + 7) >> 3;
-	     int tb2 = (tw + 7) >> 3;
-	     bld->newline();
-	     append_type_for_width(bld,tw);
-	     bld->appendFormat(" cast_%d_to_%u(",fw,tw);
-	     append_type_for_width(bld,fw);
-	     bld->append(" arg)\n");
-	     bld->append("{\n"/*}*/);
-	     if (tw > 64)
-	      { bld->appendFormat(" struct internal_bit_%d ret;\n",tw);
-		bld->append("\n");
-		if (fw > 64)
-		 { // Copy as many full bytes as both widths contain
-		   bld->appendFormat(" __builtin_memcpy(&ret.bits[0],&arg.bits[0],%d);\n",(fb1<tb1)?fb1:tb1);
-		   if (tw > fw)
-		    { // If we are widening...
-		      // Handle trailing partial source byte, if present.
-		      if (fb2 != fb1) bld->appendFormat(" ret.bits[%d] = arg.bits[%d] & %d;\n",fb1,fb1,~((~0U)<<(fw&7)));
-		      // Zero any further destination bytes.
-		      if (tb2 > fb2) bld->appendFormat(" __builtin_memset(&ret.bits[%d],%d);\n",fb2,tb2-fb2);
-		    }
-		   else
-		    { // If we are narrowing...
-		      // Copy trailing partial byte, if present.
-		      if (tb2 != tb1) bld->appendFormat(" ret.bits[%d] = arg.bits[%d] & %d;\n",tb1,tb1,~((~0U)<<(tw&7)));
-		    }
-		 }
-		else
-		 { if (fw < 64) bld->appendFormat(" arg &= 0x%xULL;\n",(1ULL<<fw)-1);
-		   for (int i=7;i>=0;i--) bld->appendFormat(" ret.bits[%d] = (arg >> %d) & 255;\n",i,i*8);
-		   bld->appendFormat(" __builtin_memset(&ret.bits[8],%d);\n",((tw+7)>>3)-8);
-		 }
-	      }
-	     else
-	      { bld->appendFormat(" u64 ret;\n");
-		bld->append("\n");
-		// know fw>64 from assert above, since tw<=64 here
-		const char *pref = " ret = ";
-		if (tw & 7)
-		 { bld->appendFormat("%s((arg->bits[%d] & (u64)%u) << %d)",pref,tw>>3,(1U<<(tw&7))-1,tw&~7U);
-		   pref = " |\n       ";
-		 }
-		for (int i=(tw>>3)-1;i>=0;i--)
-		 { bld->appendFormat("%s(((u64)arg->bits[%d]) << %d)",i,i*3);
-		   pref = " |\n       ";
-		 }
-		bld->append(";\n");
-	      }
-	     bld->append(" return(ret);\n");
-	     bld->append(/*{*/"}\n");
-	   }
+	  gen_cast(bld,&wrv[i]);
 	  break;
        case WR_NEG:
-	   { unsigned int w = wrv[i].arith.w;
-	     int i;
-	     int j;
-	     assert(w > 64);
-	     bld->newline();
-	     bld->appendFormat("struct internal_bit_%u neg_%u(struct internal_bit_%d arg)\n",w,w,w);
-	     bld->append("{\n"/*}*/);
-	     bld->append(" u16 a;\n");
-	     bld->appendFormat(" struct internal_bit_%d ret;\n",w);
-	     bld->append("\n");
-	     for (i=(w>>3)-1,j=0;i>=0;i--,j++)
-	      { bld->appendFormat(" a = %s + (255 ^ arg->bits[%d]);\n",j?"(a >> 8)":"1",j);
-		bld->appendFormat(" ret->bits[%d] = a & 255;\n",j);
-	      }
-	     if (w & 7)
-	      { bld->appendFormat(" ret->bits[%d] = (%s + (255 ^ arg->bits[%d])) & %d;\n",j?"(a >> 8)":"1",j,j,(1<<(w&7))-1);
-	      }
-	     bld->append(" return(ret);\n");
-	     bld->append(/*{*/"}\n");
-	   }
+	  gen_neg(bld,&wrv[i]);
 	  break;
        case WR_NOT:
-	   { unsigned int w = wrv[i].arith.w;
-	     int i;
-	     int j;
-	     assert(w > 64);
-	     bld->newline();
-	     bld->appendFormat("struct internal_bit_%u not_%u(struct internal_bit_%d arg)\n",w,w,w);
-	     bld->append("{\n"/*}*/);
-	     bld->append(" u16 a;\n");
-	     bld->append("\n");
-	     for (i=(w>>3)-1,j=0;i>=0;i--,j++)
-	      { bld->appendFormat(" ret->bits[%d] = ~arg->bits[%d];\n",j,j);
-	      }
-	     if (w & 7)
-	      { bld->appendFormat(" ret->bits[%d] = arg->bits[%d] ^ %d;\n",j,j,(1<<(w&7))-1);
-	      }
-	     bld->append(" return(ret);\n");
-	     bld->append(/*{*/"}\n");
-	   }
+	  gen_not(bld,&wrv[i]);
 	  break;
        default:
 	  abort();
