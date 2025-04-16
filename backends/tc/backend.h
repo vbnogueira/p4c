@@ -63,20 +63,6 @@ struct container {
   IR::Statement *s;
   } ;
 
-class FIXUP_CASTS : public Transform { 
-  private:
-    CONTAINER *contain;
-    P4::ReferenceMap *refmap;
-    P4::TypeMap *typemap;
-    const IR::Node *preorder(IR::Statement *) override;
-    const IR::Node *postorder(IR::Statement *) override;
-    const IR::Node *postorder(IR::Cast *) override;
-    virtual profile_t init_apply(const IR::Node *) override;
-    virtual void end_apply(const IR::Node *) override;
-  public:
-    explicit FIXUP_CASTS(P4::ReferenceMap *rm, P4::TypeMap *tm) : contain(0), refmap(rm), typemap(tm) { };
-  } ;
-
 enum WRTYPE {
   WR_VALUE = 1,
   WR_CONCAT,
@@ -84,6 +70,7 @@ enum WRTYPE {
   WR_SUB,
   WR_MUL,
   WR_BXSMUL,
+  WR_CAST,
   } ;
 
 class WIDTH_REC {
@@ -107,6 +94,11 @@ class WIDTH_REC {
 	int bw;
 	unsigned int sv;
 	} bxsmul;
+      // if WR_CAST
+      struct {
+	int fw;
+	int tw;
+	} cast;
       } ;
   public:
     friend bool operator<(const WIDTH_REC &l, const WIDTH_REC &r)
@@ -130,6 +122,11 @@ class WIDTH_REC {
 		     ( (l.bxsmul.bw == r.bxsmul.bw) &&
 		       (l.bxsmul.sv < r.bxsmul.sv) ) );
 	     break;
+	  case WR_CAST:
+	     return( (l.cast.fw < r.cast.fw) ||
+		     ( (l.cast.fw == r.cast.fw) &&
+		       (l.cast.tw < r.cast.tw) ) );
+	     break;
 	}
        return(0);
      }
@@ -150,6 +147,9 @@ class WIDTH_REC {
 	  case WR_BXSMUL:
 	     return((l.bxsmul.bw==r.bxsmul.bw)&&(l.bxsmul.sv==r.bxsmul.sv));
 	     break;
+	  case WR_CAST:
+	     return((l.cast.fw==r.cast.fw)&&(l.cast.tw==r.cast.tw));
+	     break;
 	}
        return(1);
      }
@@ -169,6 +169,7 @@ class SCAN_WIDTHS : public Inspector {
     void add_concat(int, int);
     void add_arith(WRTYPE, int);
     void add_bxsmul(int, unsigned int);
+    void add_cast(unsigned int, unsigned int);
     bool big_x_small_mul(const IR::Expression *, const IR::Constant *);
   public:
     explicit SCAN_WIDTHS(P4::TypeMap *tm) : nwr(0), wrv(0), typemap(tm) { }
@@ -179,6 +180,7 @@ class SCAN_WIDTHS : public Inspector {
     virtual bool preorder(const IR::Add *) override;
     virtual bool preorder(const IR::Sub *) override;
     virtual bool preorder(const IR::Mul *) override;
+    virtual bool preorder(const IR::Cast *) override;
     bool arith_common(const IR::Operation_Binary *, WRTYPE, bool = true);
     profile_t init_apply(const IR::Node *) override;
     void end_apply(const IR::Node *) override;

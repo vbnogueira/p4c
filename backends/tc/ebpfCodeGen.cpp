@@ -2846,4 +2846,29 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Mul *e)
  return(arith_common(e,"*","mul"));
 }
 
+bool ControlBodyTranslatorPNA::preorder(const IR::Cast *e)
+{
+ assert(e->type->is<IR::Type_Bits>());
+ assert(e->expr->type->is<IR::Type_Bits>());
+ auto fw = e->expr->type->to<IR::Type_Bits>()->width_bits();
+ auto tw = e->type->to<IR::Type_Bits>()->width_bits();
+ if (fw == tw)
+  { visit(e);
+    return(false);
+  }
+ if ((fw <= 64) && (tw <= 64))
+  { /*
+     * Grr.  It does not work to convert to ControlBodyTranslator;
+    return(static_cast<EBPF::ControlBodyTranslator *>(this)->preorder(e));
+     *  -> "error: no matching function for call" failure.  Why it
+     * doesn't use CodeGenInspector's methods baffles me.
+     */
+    return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
+  }
+ builder->appendFormat("cast_%d_to_%d(",fw,tw);
+ visit(e->expr);
+ builder->append(")");
+ return(false);
+}
+
 }  // namespace P4::TC

@@ -44,159 +44,11 @@ const cstring pnaParserMeta = "pna_main_parser_input_metadata_t"_cs;
 const cstring pnaInputMeta = "pna_main_input_metadata_t"_cs;
 const cstring pnaOutputMeta = "pna_main_output_metadata_t"_cs;
 
-Visitor::profile_t FIXUP_CASTS::init_apply(const IR::Node *n)
+
+static void append_type_for_width(EBPF::CodeBuilder *bld, unsigned int w)
 {
- std::cout << "FIXUP_CASTS init_apply n = " << static_cast<const void *>(n) << std::endl;
- return(this->Transform::init_apply(n));
-}
-
-void FIXUP_CASTS::end_apply(const IR::Node *n)
-{
- std::cout << "FIXUP_CASTS end_apply n = " << static_cast<const void *>(n) << std::endl;
- Transform::end_apply(n);
-}
-
-const IR::Node *FIXUP_CASTS::preorder(IR::Statement *s)
-{
- CONTAINER *c;
-
- c = new CONTAINER;
- c->temps = 0;
- c->stmts = 0;
- c->s = s;
- c->link = contain;
- contain = c;
- return(s);
-}
-
-const IR::Node *FIXUP_CASTS::postorder(IR::Statement *stmt)
-{
- CONTAINER *c;
- DECLLIST *tl;
- DECLLIST *t;
- STMTLIST *sl;
- STMTLIST *s;
- IR::BlockStatement *b;
-
- c = contain;
- if (c->s != stmt) abort();
- contain = c->link;
- tl = c->temps;
- c->temps = 0;
- sl = c->stmts;
- c->stmts = 0;
- delete c;
- if (! tl) return(stmt);
- std::cout << '\n' << "cast fixup: postorder: " << (void *)stmt << '\n' << stmt->toString() << std::endl;
- std::cout << "Declarations:";
- for (t=tl;t;t=t->link) std::cout << " " << t->decl->toString();
- std::cout << '.' << std::endl;
- b = new IR::BlockStatement();
- for (t=tl;t;t=t->link) b->append(t->decl);
- for (s=sl;s;s=s->link) b->append(s->stmt);
- b->append(stmt);
- return(b);
-}
-
-static void save_temp(TC::CONTAINER *c, IR::Declaration *d)
-{
- DECLLIST *dl;
-
- dl = new DECLLIST;
- dl->decl = d;
- dl->link = c->temps;
- c->temps = dl;
-}
-
-/*
-static void save_call(TC::CONTAINER *c, const IR::MethodCallExpression *e)
-{
- STMTLIST *sl;
- IR::MethodCallStatement *s;
-
- sl = new STMTLIST;
- s = new IR::MethodCallStatement(e);
- sl->stmt = s;
- sl->link = c->stmts;
- c->stmts = sl;
-}
-*/
-
-static void save_assign(TC::CONTAINER *c, IR::Declaration *var, const IR::Expression *e)
-{
- STMTLIST *sl;
- IR::AssignmentStatement *a;
-
- sl = new STMTLIST;
- a = new IR::AssignmentStatement(new IR::PathExpression(var->name),e);
- sl->stmt = a;
- sl->link = c->stmts;
- c->stmts = sl;
-}
-
-/*
- * The dance for IR::Type_Type is because I see such coming back from
- *  typemap->getType().  I don't know why and I don't know what it
- *  means; I hope someone who does know can fix up anything necessary.
- */
-const IR::Node *FIXUP_CASTS::postorder(IR::Cast *e)
-{
- CONTAINER *c;
-
- if (! EBPF::EBPFTypeFactory::instance) abort();
- std::cout << '\n' << "cast fixup: cast expression: " << e->toString() << std::endl;
- std::cout << "Contained in:";
- for (c=contain;c;c=c->link) std::cout << ' ' << (void *)c->s;
- std::cout << std::endl;
- const IR::Type *argtype;
- argtype = typemap->getType(e->expr,true);
- if (argtype->is<IR::Type_Type>()) argtype = argtype->to<const IR::Type_Type>()->type;
- std::cout << "Arg type: " << argtype->toString() << std::endl;
- const IR::Type *casttype;
- casttype = typemap->getType(e->destType,true);
- if (casttype->is<IR::Type_Type>()) casttype = casttype->to<const IR::Type_Type>()->type;
- std::cout << "Cast-to type: " << casttype->toString() << std::endl;
- auto aet = EBPF::EBPFTypeFactory::instance->create(argtype);
- std::cout << "Arg EBPF type: " << (void *)aet << std::endl;
- std::cout << "    (" << aet->type->toString() << ")" << std::endl;
- auto cet = EBPF::EBPFTypeFactory::instance->create(casttype);
- std::cout << "Cast-to EBPF type: " << (void *)cet << std::endl;
- std::cout << "    (" << cet->type->toString() << ")" << std::endl;
- std::cout << "Arg is scalar: " << (aet->is<EBPF::EBPFScalarType>() ? "YES" : "NO") <<
-	      "; result is scalar: " << (cet->is<EBPF::EBPFScalarType>() ? "YES" : "NO") << std::endl;
- if (!aet->is<EBPF::EBPFScalarType>() || !cet->is<EBPF::EBPFScalarType>()) return(e);
- auto aw = aet->to<EBPF::EBPFScalarType>()->implementationWidthInBits();
- auto cw = cet->to<EBPF::EBPFScalarType>()->implementationWidthInBits();
- std::cout << "Arg width: " << aw << ", scalar: " << (EBPF::EBPFScalarType::generatesScalar(aw) ? "YES" : "NO") << '\n';
- std::cout << "Result width: " << cw << ", scalar: " << (EBPF::EBPFScalarType::generatesScalar(cw) ? "YES" : "NO") << std::endl;
- if (EBPF::EBPFScalarType::generatesScalar(aw) && EBPF::EBPFScalarType::generatesScalar(cw)) return(e);
- auto sn = refmap->newName("cast_src");
- auto dn = refmap->newName("cast_dst");
- std::cout << "sn=" << sn << ", dn=" << dn << std::endl;
- auto sd = new IR::Declaration_Variable(IR::ID(sn,nullptr),argtype);
- auto dd = new IR::Declaration_Variable(IR::ID(dn,nullptr),casttype);
- std::cout << "Src declaration: " << sd->toString() << std::endl;
- std::cout << "Dst declaration: " << dd->toString() << std::endl;
- save_temp(contain,sd);
- save_temp(contain,dd);
- auto px = new IR::PathExpression(dd->getName());
-// save_call(contain,new IR::MethodCallExpression(new IR::PathExpression(":?:"),{px, new IR::PathExpression(sd->name)}));
- if (aw > cw)
-  { save_assign(contain,dd,new IR::Slice(new IR::PathExpression(sd->getName()),cw-1,0));
-  }
- else if (aw < cw)
-  { IR::Constant *zero = new IR::Constant(0);
-    IR::Constant *wzero = new IR::Constant(zero->srcInfo,IR::Type_Bits::get(zero->srcInfo,cw-aw),0,10);
-    save_assign(contain,dd,new IR::Concat(wzero, new IR::PathExpression(sd->getName())));
-  }
- else
-  { save_assign(contain,dd,new IR::PathExpression(sd->name));
-  }
- save_assign(contain,sd,e->expr);
- std::cout << "Cast expression: " << (void *)e << ", " << e->toString() << std::endl;
- std::cout << "Replacement expression: " << (void *)px << ", " << px->toString() << '.' << std::endl;
- return(px);
-// return(e);
+ if (w > 64) bld->appendFormat("struct internal_bit_%u",w);
+ else        bld->append("u64");
 }
 
 void SCAN_WIDTHS::dump() const
@@ -226,6 +78,9 @@ void SCAN_WIDTHS::dump() const
 	  break;
        case WR_BXSMUL:
 	  std::cout << "BXSMUL: " << wr->bxsmul.bw << ' ' << wr->bxsmul.sv;
+	  break;
+       case WR_CAST:
+	  std::cout << "CAST: " << wr->cast.fw << " -> " << wr->cast.tw;
 	  break;
        default:
 	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
@@ -335,6 +190,16 @@ bool SCAN_WIDTHS::preorder(const IR::Mul *e)
  return(arith_common(e,WR_MUL,false));
 }
 
+bool SCAN_WIDTHS::preorder(const IR::Cast *e)
+{
+ expr_common(e);
+ expr_common(e->expr);
+ if (e->expr->type->is<IR::Type_Bits>() && e->type->is<IR::Type_Bits>())
+  { add_cast(e->expr->type->to<IR::Type_Bits>()->width_bits(),e->type->to<IR::Type_Bits>()->width_bits());
+  }
+ return(true);
+}
+
 // There's _got_ to be a C++ standard object that can do this better.
 //  std::set maybe?  "_First_ make it work, _then_ make it better."
 void SCAN_WIDTHS::insert_wr(WIDTH_REC &wr)
@@ -405,6 +270,17 @@ void SCAN_WIDTHS::add_bxsmul(int bw, unsigned int sv)
  insert_wr(wr);
 }
 
+void SCAN_WIDTHS::add_cast(unsigned int fw, unsigned int tw)
+{
+ WIDTH_REC wr;
+
+ if (((fw <= 64) && (tw <= 64)) || (fw == tw)) return;
+ wr.type = WR_CAST;
+ wr.cast.fw = fw;
+ wr.cast.tw = tw;
+ insert_wr(wr);
+}
+
 void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 {
  int i;
@@ -425,6 +301,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
        case WR_SUB:
        case WR_MUL:
        case WR_BXSMUL:
+       case WR_CAST:
 	  break;
        default:
 	  abort();
@@ -440,11 +317,9 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  assert(wrv[i].concat.lhsw+wrv[i].concat.rhsw > 64);
 	  bld->appendFormat("extern struct internal_bit_%d concat_%d_%d(",
 		wrv[i].concat.lhsw+wrv[i].concat.rhsw, wrv[i].concat.lhsw, wrv[i].concat.rhsw);
-	  if (wrv[i].concat.lhsw > 64) bld->appendFormat("struct internal_bit_%d",wrv[i].concat.lhsw);
-	  else                         bld->appendFormat("u64");
+	  append_type_for_width(bld,wrv[i].concat.lhsw);
 	  bld->append(",");
-	  if (wrv[i].concat.rhsw > 64) bld->appendFormat("struct internal_bit_%d",wrv[i].concat.rhsw);
-	  else                         bld->appendFormat("u64");
+	  append_type_for_width(bld,wrv[i].concat.rhsw);
 	  bld->append(");\n");
 	  break;
        case WR_ADD:
@@ -471,6 +346,15 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  bld->appendFormat("extern struct internal_bit_%d bxsmul_%d_%u(struct internal_bit_%d);\n",
 		wrv[i].bxsmul.bw, wrv[i].bxsmul.bw, wrv[i].bxsmul.sv, wrv[i].bxsmul.bw);
 	  break;
+       case WR_CAST:
+	  bld->newline();
+	  assert((wrv[i].cast.fw > 64) || (wrv[i].cast.tw > 64));
+	  bld->append("extern ");
+	  append_type_for_width(bld,wrv[i].cast.tw);
+	  bld->appendFormat(" cast_%u_to_%u(",wrv[i].cast.fw,wrv[i].cast.tw);
+	  append_type_for_width(bld,wrv[i].cast.fw);
+	  bld->append(");\n");
+	  break;
        default:
 	  abort();
 	  break;
@@ -493,12 +377,11 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
        case WR_CONCAT:
 	   { auto lw = wrv[i].concat.lhsw;
 	     auto rw = wrv[i].concat.rhsw;
+	     bld->newline();
 	     bld->appendFormat("struct internal_bit_%d concat_%d_%d(",lw+rw,lw,rw);
-	     if (lw > 64) bld->appendFormat("struct internal_bit_%d",lw);
-	     else         bld->appendFormat("u64");
+	     append_type_for_width(bld,lw);
 	     bld->append(" lhs, ");
-	     if (rw > 64) bld->appendFormat("struct internal_bit_%u",rw);
-	     else         bld->appendFormat("u64");
+	     append_type_for_width(bld,rw);
 	     bld->append(" rhs)\n");
 	     bld->append("{\n"/*}*/);
 	     bld->appendFormat(" struct internal_bit_%u ret;\n",lw+rw);
@@ -611,6 +494,64 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	     bld->append(/*{*/"}\n");
 	   }
 	  break;
+       case WR_CAST:
+	   { unsigned int fw = wrv[i].cast.fw;
+	     unsigned int tw = wrv[i].cast.tw;
+	     assert(((fw>64)||(tw>64))&&(fw!=tw));
+	     int fb1 = fw >> 3;
+	     int tb1 = tw >> 3;
+	     int fb2 = (fw + 7) >> 3;
+	     int tb2 = (tw + 7) >> 3;
+	     bld->newline();
+	     append_type_for_width(bld,tw);
+	     bld->appendFormat(" cast_%d_to_%u(",fw,tw);
+	     append_type_for_width(bld,fw);
+	     bld->append(" arg)\n");
+	     bld->append("{\n"/*}*/);
+	     if (tw > 64)
+	      { bld->appendFormat(" struct internal_bit_%d ret;\n",tw);
+		bld->append("\n");
+		if (fw > 64)
+		 { // Copy as many full bytes as both widths contain
+		   bld->appendFormat(" __builtin_memcpy(&ret.bits[0],&arg.bits[0],%d);\n",(fb1<tb1)?fb1:tb1);
+		   if (tw > fw)
+		    { // If we are widening...
+		      // Handle trailing partial source byte, if present.
+		      if (fb2 != fb1) bld->appendFormat(" ret.bits[%d] = arg.bits[%d] & %d;\n",fb1,fb1,~((~0U)<<(fw&7)));
+		      // Zero any further destination bytes.
+		      if (tb2 > fb2) bld->appendFormat(" __builtin_memset(&ret.bits[%d],%d);\n",fb2,tb2-fb2);
+		    }
+		   else
+		    { // If we are narrowing...
+		      // Copy trailing partial byte, if present.
+		      if (tb2 != tb1) bld->appendFormat(" ret.bits[%d] = arg.bits[%d] & %d;\n",tb1,tb1,~((~0U)<<(tw&7)));
+		    }
+		 }
+		else
+		 { if (fw < 64) bld->appendFormat(" arg &= 0x%xULL;\n",(1ULL<<fw)-1);
+		   for (int i=7;i>=0;i--) bld->appendFormat(" ret.bits[%d] = (arg >> %d) & 255;\n",i,i*8);
+		   bld->appendFormat(" __builtin_memset(&ret.bits[8],%d);\n",((tw+7)>>3)-8);
+		 }
+	      }
+	     else
+	      { bld->appendFormat(" u64 ret;\n");
+		bld->append("\n");
+		// know fw>64 from assert above, since tw<=64 here
+		const char *pref = " ret = ";
+		if (tw & 7)
+		 { bld->appendFormat("%s((arg->bits[%d] & (u64)%u) << %d)",pref,tw>>3,(1U<<(tw&7))-1,tw&~7U);
+		   pref = " |\n       ";
+		 }
+		for (int i=(tw>>3)-1;i>=0;i--)
+		 { bld->appendFormat("%s(((u64)arg->bits[%d]) << %d)",i,i*3);
+		   pref = " |\n       ";
+		 }
+		bld->append(";\n");
+	      }
+	     bld->append(" return(ret);\n");
+	     bld->append(/*{*/"}\n");
+	   }
+	  break;
        default:
 	  abort();
 	  break;
@@ -635,7 +576,6 @@ bool Backend::process() {
     EBPF::EBPFTypeFactory::createFactory(typeMapEBPF, true);
     PassManager backEnd = {};
     backEnd.addPasses({parseTCAnno,
- new FIXUP_CASTS(refMap,typeMap), 
  new P4::ClearTypeMap(typeMap),
                        new P4::TypeChecking(refMap, typeMap, true),
  sw, tcIR, genIJ});
