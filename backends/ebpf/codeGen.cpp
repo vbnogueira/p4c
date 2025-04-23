@@ -353,15 +353,15 @@ void CodeGenInspector::emitAssignStatement(const IR::Type *ltype, const IR::Expr
     builder->appendFormat("/* rexpr = %s */",rexpr->toString());
     builder->newline();
     builder->emitIndent();
-    if (lexpr != nullptr) {
-        visit(lexpr);
-    } else {
-        builder->append(lpath);
-    }
-    builder->append(" = ");
     if (builder->target->name == "P4TC") {
         emitTCAssignmentEndianessConversion(ltype, lexpr, rexpr, lpath);
     } else {
+        if (lexpr != nullptr) {
+            visit(lexpr);
+        } else {
+            builder->append(lpath);
+        }
+        builder->append(" = ");
         visit(rexpr);
     }
     builder->endOfStatement();
@@ -506,7 +506,8 @@ void CodeGenInspector::visit_hostorder(const IR::Expression *e)
   { emitAndConvertByteOrder(e,bo);
   }
  else
-  { visit(e);
+  { getBitAlignment(e);
+//    visit(e);
   }
 }
 
@@ -658,30 +659,25 @@ void CodeGenInspector::emitTCAssignmentEndianessConversion(const IR::Type *ltype
 
 bool CodeGenInspector::storeBitAlignment(const IR::Type *ltype, const IR::Expression *lexpr,
                                          cstring lpath) {
-    auto tcTarget = dynamic_cast<const P4TCTarget *>(builder->target);
     if (lexpr != nullptr) {
         if (!(lexpr->is<IR::Member>() || lexpr->is<IR::PathExpression>())) {
             return false;
         }
     }
     auto ebpfType = EBPFTypeFactory::instance->create(ltype);
-    EBPFScalarType *scalar = nullptr;
     if (ebpfType->is<EBPFScalarType>()) {
-        scalar = ebpfType->to<EBPFScalarType>();
-        bool primitive = tcTarget->isPrimitiveByteAligned(scalar->implementationWidthInBits());
-        if (primitive) {
+        EBPFScalarType *scalar = ebpfType->to<EBPFScalarType>();
+	unsigned int bits = scalar->implementationWidthInBits();
+        if ((bits > 64) || dynamic_cast<const P4TCTarget *>(builder->target)->isPrimitiveByteAligned(bits)) {
             return false;
         } else {
-            cstring storePrimitive = scalar->implementationWidthInBits() < 32
-                                         ? "storePrimitive32"_cs
-                                         : "storePrimitive64"_cs;
-            builder->appendFormat("%v((u8 *)&", storePrimitive);
+            builder->appendFormat("%v((u8 *)&", (bits < 32) ? "storePrimitive32"_cs : "storePrimitive64"_cs);
             if (lexpr != nullptr) {
                 visit(lexpr);
             } else {
                 builder->append(lpath);
             }
-            builder->appendFormat(", %d, (", scalar->implementationWidthInBits());
+            builder->appendFormat(", %d, (", bits);
             return true;
         }
     }
@@ -695,20 +691,14 @@ void CodeGenInspector::getBitAlignment(const IR::Expression *expression) {
             visit(expression);
             return;
         }
-        auto tcTarget = dynamic_cast<const P4TCTarget *>(builder->target);
         auto ebpfType = EBPFTypeFactory::instance->create(ftype);
-        EBPFScalarType *scalar = nullptr;
         if (ebpfType->is<EBPFScalarType>()) {
-            scalar = ebpfType->to<EBPFScalarType>();
-            bool isPrimitive =
-                tcTarget->isPrimitiveByteAligned(scalar->implementationWidthInBits());
-            if (!isPrimitive) {
-                cstring getPrimitive = scalar->implementationWidthInBits() < 32
-                                           ? "getPrimitive32"_cs
-                                           : "getPrimitive64"_cs;
-                builder->appendFormat("%v((u8 *)", getPrimitive);
+            EBPFScalarType *scalar = ebpfType->to<EBPFScalarType>();
+	    unsigned int bits = scalar->implementationWidthInBits();
+            if ((bits <= 64) && !dynamic_cast<const P4TCTarget *>(builder->target)->isPrimitiveByteAligned(bits)) {
+                builder->appendFormat("%v((u8 *)", (bits < 32) ? "getPrimitive32"_cs : "getPrimitive64"_cs);
                 visit(expression);
-                builder->appendFormat(", %d)", scalar->implementationWidthInBits());
+                builder->appendFormat(", %d)", bits);
                 return;
             }
         }

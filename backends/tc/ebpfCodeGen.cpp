@@ -2755,16 +2755,20 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Concat *e)
        auto rbits = rt->width_bits();
        if (lbits+rbits > 64)
 	{ builder->appendFormat("concat_%d_%d(",lbits,rbits);
-	  visit(e->left);
+	  getBitAlignment(e->left);
+//	  visit(e->left);
 	  builder->append(",");
-	  visit(e->right);
+	  getBitAlignment(e->right);
+//	  visit(e->right);
 	  builder->append(")");
 	}
        else
 	{ builder->append("(((");
-	  visit(e->left);
+	  getBitAlignment(e->left);
+//	  visit(e->left);
 	  builder->appendFormat(")<<%d)|(",rbits);
-	  visit(e->right);
+	  getBitAlignment(e->right);
+//	  visit(e->right);
 	  builder->append("))");
 	}
        return(false);
@@ -2786,9 +2790,11 @@ bool ControlBodyTranslatorPNA::arith_common(const IR::Operation_Binary *e, const
 	{ builder->appendFormat("<<Adding widths %d and %d>>",(int)lbits,(int)rbits);
 	}
        else if (lbits <= 64)
-	{ visit(e->left);
+	{ getBitAlignment(e->left);
+//	  visit(e->left);
 	  builder->appendFormat(" %s ",smallop);
-	  visit(e->right);
+	  getBitAlignment(e->right);
+//	  visit(e->right);
 	}
        else
 	{ builder->appendFormat("%s_%u(",bigop,lbits);
@@ -2831,7 +2837,8 @@ bool ControlBodyTranslatorPNA::big_x_small_mul(const IR::Expression *big, const 
  auto bw = big->type->to<IR::Type_Bits>()->width_bits();
  assert(bw > 64);
  builder->appendFormat("bxsmul_%d_%u(",bw,static_cast<unsigned int>(small->value));
- visit(big);
+ getBitAlignment(big);
+// visit(big);
  builder->appendFormat(")");
  return(false);
 }
@@ -2897,13 +2904,15 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Cast *e)
     // return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
     // So, instead, this.  I hope it works well enough.
     builder->append("(u64)(");
-    visit(e->expr);
+    getBitAlignment(e->expr);
+//    visit(e->expr);
     builder->append(")");
     if (tw < fw) builder->appendFormat("&%lluu",(1ULL<<tw)-1ULL);
   }
  else
   { builder->appendFormat("cast_%d_to_%d(",fw,tw);
-    visit(e->expr);
+    getBitAlignment(e->expr);
+//    visit(e->expr);
     builder->append(")");
   }
  return(false);
@@ -2918,7 +2927,8 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Neg *e)
     return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
   }
  builder->appendFormat("neg_%d(",w);
- visit(e->expr);
+ getBitAlignment(e->expr);
+// visit(e->expr);
  builder->append(")");
  return(false);
 }
@@ -2932,7 +2942,8 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Cmpl *e)
     return(static_cast<EBPF::CodeGenInspector *>(this)->preorder(e));
   }
  builder->appendFormat("not_%d(",w);
- visit(e->expr);
+ getBitAlignment(e->expr);
+// visit(e->expr);
  builder->append(")");
  return(false);
 }
@@ -2949,7 +2960,8 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Shl *e)
      }
     else if (ec->value < lw)
      { builder->appendFormat("shl_%u_c_%u(",lw,static_cast<unsigned int>(ec->value));
-       visit(e->left);
+       getBitAlignment(e->left);
+//       visit(e->left);
        builder->append(")");
      }
     else
@@ -2964,9 +2976,11 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Shl *e)
      }
     else
      { builder->appendFormat("shl_%d_x_%d(",lw,rw);
-       visit(e->left);
+       getBitAlignment(e->left);
+//       visit(e->left);
        builder->append(",");
-       visit(e->right);
+       getBitAlignment(e->right);
+//       visit(e->right);
        builder->append(")");
      }
   }
@@ -2990,7 +3004,8 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Shr *e)
      }
     else if (ec->value < lw)
      { builder->appendFormat("shr%c_%u_c_%u(",signc,lw,static_cast<unsigned int>(ec->value));
-       visit(e->left);
+       getBitAlignment(e->left);
+//       visit(e->left);
        builder->append(")");
      }
     else
@@ -3005,9 +3020,11 @@ bool ControlBodyTranslatorPNA::preorder(const IR::Shr *e)
      }
     else
      { builder->appendFormat("shr%c_%d_x_%d(",signc,lw,rw);
-       visit(e->left);
+       getBitAlignment(e->left);
+//       visit(e->left);
        builder->append(",");
-       visit(e->right);
+       getBitAlignment(e->right);
+//       visit(e->right);
        builder->append(")");
      }
   }
