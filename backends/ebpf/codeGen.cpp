@@ -596,7 +596,8 @@ void CodeGenInspector::emitTCBinaryOperation(const IR::Operation_Binary *b) {
         rByteOrder = tcTarget->getByteOrder(typeMap, action, rexpr);
     if ((width <= 8) || (lByteOrder == "HOST"))
        visit(lexpr);
-    emitAndConvertByteOrder(lexpr,"NETWORK"_cs);
+    else
+	emitAndConvertByteOrder(lexpr,"NETWORK"_cs);
     builder->spc();
     builder->append(stringop);
     builder->spc();
@@ -733,6 +734,21 @@ cstring EBPFInitializerUtils::genHexStr(const big_int &value, unsigned width,
     if (str.size() < nibbles) str = std::string(nibbles - str.size(), '0') + str;
     BUG_CHECK(str.size() == nibbles, "%1%: value size does not match %2% bits", expr, width);
     return str;
+}
+
+// See the comment on the declaration in codeGen.h
+bool TCisPrimitiveByteAligned(unsigned int bits)
+{
+ switch ((bits+7) >> 3)
+  { case 1:
+    case 2:
+    case 4:
+    case 8:
+       return(true);
+    default:
+       return(false);
+       break;
+  }
 }
 
 }  // namespace P4::EBPF

@@ -227,32 +227,30 @@ void PNAArchTC::emitGlobalFunctions(EBPF::CodeBuilder *builder) const {
         "static inline u32 getPrimitive32(u8 *a, int size) {\n"
         "   if(size <= 16 || size > 24) {\n"
         "       bpf_printk(\"Invalid size.\");\n"
-        "   };\n"
+        "   }\n"
         "   return  ((((u32)a[2]) <<16) | (((u32)a[1]) << 8) | a[0]);\n"
         "}\n"
         "static inline u64 getPrimitive64(u8 *a, int size) {\n"
         "   if(size <= 32 || size > 56) {\n"
         "       bpf_printk(\"Invalid size.\");\n"
-        "   };\n"
+        "   }\n"
         "   if(size <= 40) {\n"
         "       return  ((((u64)a[4]) << 32) | (((u64)a[3]) << 24) | (((u64)a[2]) << 16) | "
         "(((u64)a[1]) << 8) | a[0]);\n"
         "   } else {\n"
         "       if(size <= 48) {\n"
         "           return  ((((u64)a[5]) << 40) | (((u64)a[4]) << 32) | (((u64)a[3]) << 24) | "
-        "(((u64)a[2]) << 16) | (((u64)a[1]) << "
-        "8) | a[0]);\n"
+        "(((u64)a[2]) << 16) | (((u64)a[1]) << 8) | a[0]);\n"
         "       } else {\n"
         "           return  ((((u64)a[6]) << 48) | (((u64)a[5]) << 40) | (((u64)a[4]) << 32) | "
-        "(((u64)a[3]) << 24) | (((u64)a[2]) << "
-        "16) | (((u64)a[1]) << 8) | a[0]);\n"
+        "(((u64)a[3]) << 24) | (((u64)a[2]) << 16) | (((u64)a[1]) << 8) | a[0]);\n"
         "       }\n"
         "   }\n"
         "}\n"
         "static inline void storePrimitive32(u8 *a, int size, u32 value) {\n"
         "   if(size <= 16 || size > 24) {\n"
         "       bpf_printk(\"Invalid size.\");\n"
-        "   };\n"
+        "   }\n"
         "   a[0] = (u8)(value);\n"
         "   a[1] = (u8)(value >> 8);\n"
         "   a[2] = (u8)(value >> 16);\n"
@@ -260,7 +258,7 @@ void PNAArchTC::emitGlobalFunctions(EBPF::CodeBuilder *builder) const {
         "static inline void storePrimitive64(u8 *a, int size, u64 value) {\n"
         "   if(size <= 32 || size > 56) {\n"
         "       bpf_printk(\"Invalid size.\");\n"
-        "   };\n"
+        "   }\n"
         "   a[0] = (u8)(value);\n"
         "   a[1] = (u8)(value >> 8);\n"
         "   a[2] = (u8)(value >> 16);\n"
@@ -2347,8 +2345,10 @@ void ControlBodyTranslatorPNA::processMethod(const P4::ExternMethod *method) {
     }
 }
 
-bool ControlBodyTranslatorPNA::preorder(const IR::AssignmentStatement *a) {
+bool ControlBodyTranslatorPNA::preorder(const IR::AssignmentStatement *a)
+{
     if (auto methodCallExpr = a->right->to<IR::MethodCallExpression>()) {
+ builder->append("/*CBTP::preorder Assignment A*/");
         auto mname = methodCallExpr->method->toString();
         if (mname == "is_net_port" || mname == "is_host_port") {
             builder->emitIndent();
@@ -2409,8 +2409,33 @@ bool ControlBodyTranslatorPNA::preorder(const IR::AssignmentStatement *a) {
             return (false);
         }
     }
-
-    return EBPF::CodeGenInspector::preorder(a);
+ auto ltype = typeMap->getType(a->left);
+ if (ltype)
+  { builder->append("/*CBTP::preorder Assignment B1*/");
+    auto et = EBPF::EBPFTypeFactory::instance->create(ltype);
+    if (et->is<EBPF::EBPFScalarType>())
+     { auto bits = et->to<EBPF::EBPFScalarType>()->implementationWidthInBits();
+       builder->appendFormat("/*bits=%u*/\n",(unsigned int)bits);
+       if (! EBPF::TCisPrimitiveByteAligned(bits))
+	{ if (bits <= 32)
+	   { builder->appendFormat("storePrimitive32(&");
+	   }
+	  else if (bits <= 64)
+	   { builder->appendFormat("storePrimitive64(&");
+	   }
+	  else
+	   { builder->appendFormat("assign_%u(&",bits);
+	   }
+	  visit(a->left);
+	  builder->append("[0],");
+	  visit(a->right);
+	  builder->append(");");
+	  return(false);
+	}
+     }
+  }
+ builder->append("/*CBTP::preorder Assignment B2*/");
+ return(EBPF::CodeGenInspector::preorder(a));
 }
 // =====================ActionTranslationVisitorPNA=============================
 ActionTranslationVisitorPNA::ActionTranslationVisitorPNA(

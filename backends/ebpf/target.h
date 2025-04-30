@@ -29,6 +29,17 @@ limitations under the License.
 
 namespace P4::EBPF {
 
+/*
+ * At various places, we'd like to test
+	dynamic_cast<const EBPF::P4TCTarget *>(builder->target)->isPrimitiveByteAligned(bits)
+ *  But, some of those places, we can't do that because we don't have a
+ *  builder yet, and isPrimitiveByteAligned() is a method on
+ *  P4TCTarget.  I don't understand why, because its return value
+ *  depends on nothing but its argument.  So we provide a non-method
+ *  function instead.
+ */
+extern bool TCisPrimitiveByteAligned(unsigned int);
+
 using namespace P4::literals;
 
 enum TableKind {
@@ -240,8 +251,7 @@ class P4TCTarget : public KernelSamplesTarget {
     }
 
     bool isPrimitiveByteAligned(int width) const {
-        return (width <= 8 || width <= 16 || (width > 24 && width <= 32) ||
-                (width > 56 && width <= 64));
+        return(TCisPrimitiveByteAligned(width));
     }
 };
 

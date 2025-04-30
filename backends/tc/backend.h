@@ -85,6 +85,7 @@ enum WRTYPE {
   WR_BITXOR,
   WR_ADDSAT,
   WR_SUBSAT,
+  WR_ASSIGN,
   } ;
 
 class WIDTH_REC {
@@ -142,6 +143,10 @@ class WIDTH_REC {
 	int w;
 	bool issigned;
 	} sarith;
+      // if WR_ASSIGN
+      struct {
+	int w;
+	} assign;
       } ;
   public:
     friend bool operator<(const WIDTH_REC &l, const WIDTH_REC &r)
@@ -200,6 +205,9 @@ class WIDTH_REC {
 		     ( (l.sarith.w == r.sarith.w) &&
 		       (!l.sarith.issigned && r.sarith.issigned) ) );
 	     break;
+	  case WR_ASSIGN:
+	     return(l.assign.w < r.assign.w);
+	     break;
 	}
        return(0);
      }
@@ -245,6 +253,9 @@ class WIDTH_REC {
 	  case WR_SUBSAT:
 	     return((l.sarith.w==r.sarith.w)&&(l.sarith.issigned==r.sarith.issigned));
 	     break;
+	  case WR_ASSIGN:
+	     return(l.assign.w==r.assign.w);
+	     break;
 	}
        return(1);
      }
@@ -270,6 +281,7 @@ class SCAN_WIDTHS : public Inspector {
     void add_shift_c(WRTYPE, unsigned int, unsigned int);
     void add_shift_x(WRTYPE, unsigned int, unsigned int);
     void add_cmp(unsigned int, unsigned char);
+    void add_assign(unsigned int);
   public:
     explicit SCAN_WIDTHS(P4::TypeMap *tm) : nwr(0), wrv(0), typemap(tm) { }
     ~SCAN_WIDTHS(void) { std::free(wrv); }
@@ -295,6 +307,7 @@ class SCAN_WIDTHS : public Inspector {
     virtual bool preorder(const IR::BXor *) override;
     virtual bool preorder(const IR::AddSat *) override;
     virtual bool preorder(const IR::SubSat *) override;
+    virtual bool preorder(const IR::AssignmentStatement *) override;
     bool arith_common_2(const IR::Operation_Binary *, WRTYPE, bool = true);
     bool arith_common_1(const IR::Operation_Unary *, WRTYPE, bool = true);
     bool sarith_common_2(const IR::Operation_Binary *, WRTYPE, bool = true);

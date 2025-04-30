@@ -139,6 +139,9 @@ void SCAN_WIDTHS::dump() const
        case WR_SUBSAT:
 	  std::cout << "SUBSAT: " << wr->arith.w;
 	  break;
+       case WR_ASSIGN:
+	  std::cout << "ASSIGN: " << wr->assign.w;
+	  break;
        default:
 	  std::cout << '?' << static_cast<std::underlying_type<WRTYPE>::type>(wr->type);
 	  break;
@@ -403,6 +406,16 @@ bool SCAN_WIDTHS::preorder(const IR::SubSat *e)
  return(sarith_common_2(e,WR_SUBSAT));
 }
 
+bool SCAN_WIDTHS::preorder(const IR::AssignmentStatement *s)
+{
+ auto et = EBPF::EBPFTypeFactory::instance->create(typemap->getType(s->left));
+ if (et->is<EBPF::EBPFScalarType>())
+  { auto bits = et->to<EBPF::EBPFScalarType>()->implementationWidthInBits();
+    if ((bits > 64) && !EBPF::TCisPrimitiveByteAligned(bits)) add_assign(bits);
+  }
+ return(true);
+}
+
 // There's _got_ to be a C++ standard object that can do this better.
 //  std::set maybe?  "_First_ make it work, _then_ make it better."
 void SCAN_WIDTHS::insert_wr(WIDTH_REC &wr)
@@ -528,6 +541,16 @@ void SCAN_WIDTHS::add_sarith(WRTYPE t, int w, bool sgn)
  insert_wr(wr);
 }
 
+void SCAN_WIDTHS::add_assign(unsigned int w)
+{
+ WIDTH_REC wr;
+
+ assert(w>64);
+ wr.type = WR_ASSIGN;
+ wr.assign.w = w;
+ insert_wr(wr);
+}
+
 void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 {
  int i;
@@ -563,6 +586,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
        case WR_BITXOR:
        case WR_ADDSAT:
        case WR_SUBSAT:
+       case WR_ASSIGN:
 	  break;
        default:
 	  abort();
@@ -706,6 +730,13 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 		cmp_string(wrv[i].cmp.cmp&CMP_BASE),
 		wrv[i].cmp.w );
 	  break;
+       case WR_ASSIGN:
+	  bld->newline();
+	  // XXX assert !TCisPrimitiveByteAligned() maybe?
+	  bld->appendFormat("extern void assign_%u(u8 *, ",wrv[i].assign.w);
+	  append_type_for_width(bld,wrv[i].assign.w);
+	  bld->append(");\n");
+	  break;
        default:
 	  abort();
 	  break;
@@ -774,7 +805,7 @@ static void gen_add(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(" u16 a;\n");
  bld->append("\n");
  for (i=0;i<b;i++)
-  { bld->appendFormat(" a = lhs->bits[%u] + rhs->bits[%u]%s;\n",i,i,i?" + (a >> 8)":"");
+  { bld->appendFormat(" a = lhs.bits[%u] + rhs.bits[%u]%s;\n",i,i,i?" + (a >> 8)":"");
     bld->appendFormat(" ret.bits[%u] = a & ",i);
     if (i+1 < b) bld->append("255"); else bld->appendFormat("%u",255>>((b*8)-w));
     bld->append(";\n");
@@ -801,7 +832,7 @@ static void gen_sub(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(" u16 a;\n");
  bld->append("\n");
  for (i=0;i<b;i++)
-  { bld->appendFormat(" a = lhs->bits[%u] - rhs->bits[%u]%s;\n",i,i,i?" - ((a >> 8) & 1)":"");
+  { bld->appendFormat(" a = lhs.bits[%u] - rhs.bits[%u]%s;\n",i,i,i?" - ((a >> 8) & 1)":"");
     bld->appendFormat(" ret.bits[%u] = a & ",i);
     if (i+1 < b) bld->append("255"); else bld->appendFormat("%u",255>>((b*8)-w));
     bld->append(";\n");
@@ -829,7 +860,7 @@ static void gen_mul(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  for (i=0;i<b;i++)
   { bld->appendFormat(" a =%s",i?" (a >> 8) +":"");
     for (j=i;j>=0;j--)
-     { bld->appendFormat(" (lhs->bits[%d] * rhs->bits[%d])%s",j,(int)i-j,j?" +":"");
+     { bld->appendFormat(" (lhs.bits[%d] * rhs.bits[%d])%s",j,(int)i-j,j?" +":"");
      }
     bld->append(";\n");
     bld->appendFormat(" ret.bits[%u] = a & ",i);
@@ -858,7 +889,7 @@ static void gen_bxsmul(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(" u32 a;\n");
  bld->append("\n");
  for (i=0;i<b;i++)
-  { bld->appendFormat(" a =%s (arg->bits[%u] * %u);\n",i?" (a >> 8) +":"",i,sv);
+  { bld->appendFormat(" a =%s (arg.bits[%u] * %u);\n",i?" (a >> 8) +":"",i,sv);
     bld->appendFormat(" ret.bits[%u] = a & ",i);
     if (i+1 < b) bld->append("255"); else bld->appendFormat("%u",255U>>((b*8)-bw));
     bld->append(";\n");
@@ -901,7 +932,7 @@ static void gen_cast(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
 	  // Handle trailing partial source byte, if present.
 	  if (fb2 != fb1) bld->appendFormat(" ret.bits[%d] = arg.bits[%d] & %d;\n",fb1,fb1,~((~0U)<<(fw&7)));
 	  // Zero any further destination bytes.
-	  if (tb2 > fb2) bld->appendFormat(" __builtin_memset(&ret.bits[%d],%d);\n",fb2,tb2-fb2);
+	  if (tb2 > fb2) bld->appendFormat(" __builtin_memset(&ret.bits[%d],0,%d);\n",fb2,tb2-fb2);
 	}
        else
 	{ // If we are narrowing...
@@ -912,7 +943,7 @@ static void gen_cast(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
     else
      { if (fw < 64) bld->appendFormat(" arg &= 0x%xULL;\n",(1ULL<<fw)-1);
        for (int i=7;i>=0;i--) bld->appendFormat(" ret.bits[%d] = (arg >> %d) & 255;\n",i,i*8);
-       bld->appendFormat(" __builtin_memset(&ret.bits[8],%d);\n",((tw+7)>>3)-8);
+       bld->appendFormat(" __builtin_memset(&ret.bits[8],0,%d);\n",((tw+7)>>3)-8);
      }
   }
  else
@@ -921,7 +952,7 @@ static void gen_cast(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
     // know fw>64 from assert above, since tw<=64 here
     const char *pref = " ret = ";
     if (tw & 7)
-     { bld->appendFormat("%s((arg->bits[%d] & (u64)%u) << %d)",pref,tw>>3,(1U<<(tw&7))-1,tw&~7U);
+     { bld->appendFormat("%s((arg.bits[%d] & (u64)%u) << %d)",pref,tw>>3,(1U<<(tw&7))-1,tw&~7U);
        pref = " |\n       ";
      }
     for (int i=(tw>>3)-1;i>=0;i--)
@@ -950,11 +981,11 @@ static void gen_neg(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
  bld->append("\n");
  for (i=(w>>3)-1,j=0;i>=0;i--,j++)
-  { bld->appendFormat(" a = %s + (255 ^ arg->bits[%d]);\n",j?"(a >> 8)":"1",j);
-    bld->appendFormat(" ret->bits[%d] = a & 255;\n",j);
+  { bld->appendFormat(" a = %s + (255 ^ arg.bits[%d]);\n",j?"(a >> 8)":"1",j);
+    bld->appendFormat(" ret.bits[%d] = a & 255;\n",j);
   }
  if (w & 7)
-  { bld->appendFormat(" ret->bits[%d] = (%s + (255 ^ arg->bits[%d])) & %d;\n",j?"(a >> 8)":"1",j,j,(1<<(w&7))-1);
+  { bld->appendFormat(" ret.bits[%d] = (%s + (255 ^ arg.bits[%d])) & %d;\n",j?"(a >> 8)":"1",j,j,(1<<(w&7))-1);
   }
  bld->append(" return(ret);\n");
  bld->append(/*{*/"}\n");
@@ -975,10 +1006,10 @@ static void gen_not(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(" u16 a;\n");
  bld->append("\n");
  for (i=(w>>3)-1,j=0;i>=0;i--,j++)
-  { bld->appendFormat(" ret->bits[%d] = ~arg->bits[%d];\n",j,j);
+  { bld->appendFormat(" ret.bits[%d] = ~arg.bits[%d];\n",j,j);
   }
  if (w & 7)
-  { bld->appendFormat(" ret->bits[%d] = arg->bits[%d] ^ %d;\n",j,j,(1<<(w&7))-1);
+  { bld->appendFormat(" ret.bits[%d] = arg.bits[%d] ^ %d;\n",j,j,(1<<(w&7))-1);
   }
  bld->append(" return(ret);\n");
  bld->append(/*{*/"}\n");
@@ -1010,7 +1041,7 @@ static void gen_shl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
     bld->append(" return(v);\n");
   }
  else
-  { bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
+  { bld->appendFormat(" struct internal_bit_%u rv;\n",lw);
     o = sv >> 3;
     sv &= 7;
     if (sv) bld->append(" u16 a;\n");
@@ -1070,7 +1101,7 @@ static void gen_shrl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
     bld->append(" return(v);\n");
   }
  else
-  { bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
+  { bld->appendFormat(" struct internal_bit_%u rv;\n",lw);
     if (sv >= (lw & ~7U))
      { // No bits survive from anything below the top byte of v
        bld->newline();
@@ -1156,7 +1187,7 @@ static void gen_shra_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
     bld->append(" return(v);\n");
   }
  else
-  { bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
+  { bld->appendFormat(" struct internal_bit_%u rv;\n",lw);
     if (sv >= (lw & ~7U))
      { // No bits survive from anything below the top byte of v
        bld->newline();
@@ -1333,7 +1364,7 @@ static void gen_shl_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(" sh)\n");
  bld->append("{\n"/*}*/);
  if (rw > 64) bld->append(" unsigned int s;\n");
- if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
+ if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv;\n",lw);
  bld->append(" unsigned int i;\n");
  bld->append(" u16 a;\n");
  bld->append(" unsigned int left;\n");
@@ -1399,7 +1430,7 @@ static void gen_shrl_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(" sh)\n");
  bld->append("{\n"/*}*/);
  if (rw > 64) bld->append(" unsigned int s;\n");
- if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
+ if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv;\n",lw);
  bld->append(" u16 a;\n");
  bld->append(" unsigned int i;\n");
  bld->append(" unsigned int o;\n");
@@ -1456,7 +1487,7 @@ static void gen_shra_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(" sh)\n");
  bld->append("{\n"/*}*/);
  if (rw > 64) bld->append(" unsigned int s;\n");
- if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
+ if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv;\n",lw);
  bld->append(" u16 a;\n");
  bld->append(" unsigned int i;\n");
  bld->append(" unsigned int o;\n");
@@ -1605,7 +1636,7 @@ static void gen_bitop(WRTYPE wrt, EBPF::CodeBuilder *bld, const WIDTH_REC *wr, c
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%d ret;\n",w);
  bld->append("\n");
- for (i=0;i<b;i++) bld->appendFormat(" ret.bits[%u] = lhs->bits[%u] %s rhs->bits[%u];\n",i,i,op,i);
+ for (i=0;i<b;i++) bld->appendFormat(" ret.bits[%u] = lhs.bits[%u] %s rhs.bits[%u];\n",i,i,op,i);
  bld->append(" return(ret);\n");
  bld->append(/*{*/"}\n");
 }
@@ -1674,7 +1705,7 @@ static void gen_addsat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
     bld->append(" u16 a;\n");
     bld->append("\n");
     for (i=0;i<b;i++)
-     { bld->appendFormat(" a = lhs->bits[%d] + rhs->bits[%d]%s;\n",i,i,i?" + (a >> 8)":"");
+     { bld->appendFormat(" a = lhs.bits[%d] + rhs.bits[%d]%s;\n",i,i,i?" + (a >> 8)":"");
        bld->appendFormat(" ret.bits[%d] = a & ",i);
        if (i+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-w));
        bld->append(";\n");
@@ -1771,7 +1802,7 @@ static void gen_subsat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
     bld->append(" u16 a;\n");
     bld->append("\n");
     for (i=0;i<b;i++)
-     { bld->appendFormat(" a = lhs->bits[%d] + ~rhs->bits[%d] + %s;\n",i,i,i?"(a >> 8)":"1");
+     { bld->appendFormat(" a = lhs.bits[%d] + ~rhs.bits[%d] + %s;\n",i,i,i?"(a >> 8)":"1");
        bld->appendFormat(" ret.bits[%d] = a & ",i);
        if (i+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-w));
        bld->append(";\n");
@@ -1793,6 +1824,20 @@ static void gen_subsat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
      }
   }
  bld->append(" return(ret);\n");
+ bld->append(/*{*/"}\n");
+}
+
+static void gen_assign(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
+{
+ unsigned int w;
+
+ assert(wr->type == WR_ASSIGN);
+ w = wr->assign.w;
+ bld->appendFormat("void assign_%u(u8 *lhs, ",w);
+ append_type_for_width(bld,w);
+ bld->append(" rhs)\n");
+ bld->append("{\n"/*}*/);
+ bld->appendFormat(" __builtin_memcpy(lhs,&rhs.bits[0],%u);\n",(w+7)>>3);
  bld->append(/*{*/"}\n");
 }
 
@@ -1865,6 +1910,9 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	  break;
        case WR_SUBSAT:
 	  gen_subsat(bld,&wrv[i]);
+	  break;
+       case WR_ASSIGN:
+	  gen_assign(bld,&wrv[i]);
 	  break;
        default:
 	  abort();
