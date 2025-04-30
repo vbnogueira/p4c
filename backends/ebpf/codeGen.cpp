@@ -696,11 +696,19 @@ void CodeGenInspector::getBitAlignment(const IR::Expression *expression) {
         if (ebpfType->is<EBPFScalarType>()) {
             EBPFScalarType *scalar = ebpfType->to<EBPFScalarType>();
 	    unsigned int bits = scalar->implementationWidthInBits();
-            if ((bits <= 64) && !dynamic_cast<const P4TCTarget *>(builder->target)->isPrimitiveByteAligned(bits)) {
-                builder->appendFormat("%v((u8 *)", (bits < 32) ? "getPrimitive32"_cs : "getPrimitive64"_cs);
-                visit(expression);
-                builder->appendFormat(", %d)", bits);
-                return;
+            if (bits <= 64)
+	     { if (! dynamic_cast<const P4TCTarget *>(builder->target)->isPrimitiveByteAligned(bits))
+		{ builder->appendFormat("%v((u8 *)", (bits < 32) ? "getPrimitive32"_cs : "getPrimitive64"_cs);
+		  visit(expression);
+		  builder->appendFormat(", %d)", bits);
+		  return;
+		}
+            }
+	   else
+            { builder->appendFormat("loadfrom_%u(&",bits);
+	      visit(expression);
+	      builder->append("[0])");
+	      return;
             }
         }
     }

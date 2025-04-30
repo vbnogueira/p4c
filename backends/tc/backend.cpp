@@ -1673,13 +1673,22 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 
  bld->appendLine("// These do not belong in the *_parser.h file!");
  bld->appendLine("// XXX Figure out a better place for them.");
- bld->newline();
  for (i=0;i<nwr;i++)
   { switch (wrv[i].type)
      { case WR_VALUE:
-    	  bld->appendFormat("struct internal_bit_%d {\n",wrv[i].value);
+	  bld->newline();
+    	  bld->appendFormat("struct internal_bit_%d {\n"/*}*/,wrv[i].value);
 	  bld->appendFormat("  u8 bits[%d];\n",(wrv[i].value+7)>>3);
-	  bld->appendLine("};");
+	  bld->append(/*{*/"};\n");
+	  bld->newline();
+	  bld->appendFormat("static __always_inline struct internal_bit_%u loadfrom_%u(u8 *in)\n",wrv[i].value,wrv[i].value);
+	  bld->append("{\n"/*}*/);
+	  bld->appendFormat(" struct internal_bit_%d rv;\n",wrv[i].value);
+	  bld->append("\n");
+	  bld->appendFormat(" __builtin_memcpy(&rv.bits[0],in,%d);\n",(wrv[i].value+7)>>3);
+	  if (wrv[i].value & 7) bld->appendFormat(" rv.bits[%d] &= %d;\n",wrv[i].value>>3,(1U<<(wrv[i].value&7))-1);
+	  bld->append(" return(rv);\n");
+	  bld->append(/*{*/"}\n");
 	  break;
        case WR_CONCAT:
        case WR_ADD:
