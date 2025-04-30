@@ -551,199 +551,6 @@ void SCAN_WIDTHS::add_assign(unsigned int w)
  insert_wr(wr);
 }
 
-void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
-{
- int i;
- const char *opname;
-
- bld->appendLine("// These do not belong in the *_parser.h file!");
- bld->appendLine("// XXX Figure out a better place for them.");
- for (i=0;i<nwr;i++)
-  { switch (wrv[i].type)
-     { case WR_VALUE:
-	  bld->newline();
-    	  bld->appendFormat("struct internal_bit_%d {\n",wrv[i].value);
-	  bld->appendFormat("  u8 bits[%d];\n",(wrv[i].value+7)>>3);
-	  bld->appendLine("};");
-	  break;
-       case WR_CONCAT:
-       case WR_ADD:
-       case WR_SUB:
-       case WR_MUL:
-       case WR_BXSMUL:
-       case WR_CAST:
-       case WR_NEG:
-       case WR_NOT:
-       case WR_SHL_X:
-       case WR_SHL_C:
-       case WR_SHRA_X:
-       case WR_SHRA_C:
-       case WR_SHRL_X:
-       case WR_SHRL_C:
-       case WR_CMP:
-       case WR_BITAND:
-       case WR_BITOR:
-       case WR_BITXOR:
-       case WR_ADDSAT:
-       case WR_SUBSAT:
-       case WR_ASSIGN:
-	  break;
-       default:
-	  abort();
-	  break;
-     }
-  }
- for (i=0;i<nwr;i++)
-  { switch (wrv[i].type)
-     { case WR_VALUE:
-	  break;
-       case WR_CONCAT:
-	  bld->newline();
-	  assert(wrv[i].concat.lhsw+wrv[i].concat.rhsw > 64);
-	  bld->appendFormat("extern struct internal_bit_%d concat_%d_%d(",
-		wrv[i].concat.lhsw+wrv[i].concat.rhsw, wrv[i].concat.lhsw, wrv[i].concat.rhsw);
-	  append_type_for_width(bld,wrv[i].concat.lhsw);
-	  bld->append(",");
-	  append_type_for_width(bld,wrv[i].concat.rhsw);
-	  bld->append(");\n");
-	  break;
-       case WR_ADD:    opname = "add";      if (0) {
-       case WR_SUB:    opname = "sub";    } if (0) {
-       case WR_MUL:    opname = "mul";    } if (0) {
-       case WR_BITAND: opname = "bitand"; } if (0) {
-       case WR_BITOR:  opname = "bitor";  } if (0) {
-       case WR_BITXOR: opname = "bitxor"; }
-	  bld->newline();
-	  assert(wrv[i].arith.w > 64);
-	  bld->appendFormat("extern struct internal_bit_%d %s_%d(struct internal_bit_%d, struct internal_bit_%d);\n",
-		wrv[i].arith.w, opname, wrv[i].arith.w, wrv[i].arith.w, wrv[i].arith.w);
-	  break;
-       case WR_ADDSAT: opname = "addsat";   if (0) {
-       case WR_SUBSAT: opname = "subsat"; }
-	  /*
-	   * ADDSAT and SUBSAT are different because there's no C
-	   *  operator to fall back on for small sizes.
-	   */
-	  bld->newline();
-	  bld->append("extern ");
-	  append_type_for_width(bld,wrv[i].arith.w);
-	  bld->appendFormat(" %s_%d(",opname,wrv[i].arith.w);
-	  append_type_for_width(bld,wrv[i].arith.w);
-	  bld->append(", ");
-	  append_type_for_width(bld,wrv[i].arith.w);
-	  bld->append(");\n");
-	  break;
-       case WR_NEG:
-	  opname = "neg";
-	  if (0)
-	   {
-       case WR_NOT:
-	     opname = "not";
-	   }
-	  bld->newline();
-	  assert(wrv[i].arith.w > 64);
-	  bld->appendFormat("extern struct internal_bit_%d %s_%d(struct internal_bit_%d);\n",
-		wrv[i].arith.w, opname, wrv[i].arith.w, wrv[i].arith.w);
-	  break;
-       case WR_BXSMUL:
-	  bld->newline();
-	  assert(wrv[i].bxsmul.bw > 64);
-	  assert(wrv[i].bxsmul.sv < (1U<<22));
-	  bld->appendFormat("extern struct internal_bit_%d bxsmul_%d_%u(struct internal_bit_%d);\n",
-		wrv[i].bxsmul.bw, wrv[i].bxsmul.bw, wrv[i].bxsmul.sv, wrv[i].bxsmul.bw);
-	  break;
-       case WR_CAST:
-	  bld->newline();
-	  assert((wrv[i].cast.fw > 64) || (wrv[i].cast.tw > 64));
-	  bld->append("extern ");
-	  append_type_for_width(bld,wrv[i].cast.tw);
-	  bld->appendFormat(" cast_%u_to_%u(",wrv[i].cast.fw,wrv[i].cast.tw);
-	  append_type_for_width(bld,wrv[i].cast.fw);
-	  bld->append(");\n");
-	  break;
-       case WR_SHL_X:
-	  bld->newline();
-	  assert((wrv[i].shift_x.lw > 64) || (wrv[i].shift_x.rw > 64));
-	  bld->append("extern ");
-	  append_type_for_width(bld,wrv[i].shift_x.lw);
-	  bld->appendFormat(" shl_%u_x_%u(",wrv[i].shift_x.lw,wrv[i].shift_x.rw);
-	  append_type_for_width(bld,wrv[i].shift_x.lw);
-	  bld->append(", ");
-	  append_type_for_width(bld,wrv[i].shift_x.rw);
-	  bld->append(");\n");
-	  break;
-       case WR_SHL_C:
-	  bld->newline();
-	  assert(wrv[i].shift_c.lw > 64);
-	  bld->append("extern ");
-	  append_type_for_width(bld,wrv[i].shift_c.lw);
-	  bld->appendFormat(" shl_%u_c_%u(",wrv[i].shift_c.lw,wrv[i].shift_c.sv);
-	  append_type_for_width(bld,wrv[i].shift_c.lw);
-	  bld->append(");\n");
-	  break;
-       case WR_SHRA_X:
-	  bld->newline();
-	  assert((wrv[i].shift_x.lw > 64) || (wrv[i].shift_x.rw > 64));
-	  bld->append("extern ");
-	  append_type_for_width(bld,wrv[i].shift_x.lw);
-	  bld->appendFormat(" shra_%u_x_%u(",wrv[i].shift_x.lw,wrv[i].shift_x.rw);
-	  append_type_for_width(bld,wrv[i].shift_x.lw);
-	  bld->append(", ");
-	  append_type_for_width(bld,wrv[i].shift_x.rw);
-	  bld->append(");\n");
-	  break;
-       case WR_SHRA_C:
-	  bld->newline();
-	  assert(wrv[i].shift_c.lw > 64);
-	  bld->append("extern ");
-	  append_type_for_width(bld,wrv[i].shift_c.lw);
-	  bld->appendFormat(" shra_%u_c_%u(",wrv[i].shift_c.lw,wrv[i].shift_c.sv);
-	  append_type_for_width(bld,wrv[i].shift_c.lw);
-	  bld->append(");\n");
-	  break;
-       case WR_SHRL_X:
-	  bld->newline();
-	  assert((wrv[i].shift_x.lw > 64) || (wrv[i].shift_x.rw > 64));
-	  bld->append("extern ");
-	  append_type_for_width(bld,wrv[i].shift_x.lw);
-	  bld->appendFormat(" shrl_%u_x_%u(",wrv[i].shift_x.lw,wrv[i].shift_x.rw);
-	  append_type_for_width(bld,wrv[i].shift_x.lw);
-	  bld->append(", ");
-	  append_type_for_width(bld,wrv[i].shift_x.rw);
-	  bld->append(");\n");
-	  break;
-       case WR_SHRL_C:
-	  bld->newline();
-	  assert(wrv[i].shift_c.lw > 64);
-	  bld->append("extern ");
-	  append_type_for_width(bld,wrv[i].shift_c.lw);
-	  bld->appendFormat(" shrl_%u_c_%u(",wrv[i].shift_c.lw,wrv[i].shift_c.sv);
-	  append_type_for_width(bld,wrv[i].shift_c.lw);
-	  bld->append(");\n");
-	  break;
-       case WR_CMP:
-	  bld->newline();
-	  assert(wrv[i].cmp.w > 64);
-	  bld->appendFormat("extern int cmp_%s_%u_%s(struct internal_bit_%u);",
-		(wrv[i].cmp.cmp & CMP_SIGNED) ? "s" : "u",
-		wrv[i].cmp.w,
-		cmp_string(wrv[i].cmp.cmp&CMP_BASE),
-		wrv[i].cmp.w );
-	  break;
-       case WR_ASSIGN:
-	  bld->newline();
-	  // XXX assert !TCisPrimitiveByteAligned() maybe?
-	  bld->appendFormat("extern void assign_%u(u8 *, ",wrv[i].assign.w);
-	  append_type_for_width(bld,wrv[i].assign.w);
-	  bld->append(");\n");
-	  break;
-       default:
-	  abort();
-	  break;
-     }
-  }
-}
-
 static void gen_concat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
 {
  unsigned int lw;
@@ -754,7 +561,7 @@ static void gen_concat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  lw = wr->concat.lhsw;
  rw = wr->concat.rhsw;
  bld->newline();
- bld->appendFormat("struct internal_bit_%u concat_%u_%u(",lw+rw,lw,rw);
+ bld->appendFormat("static __always_inline struct internal_bit_%u concat_%u_%u(",lw+rw,lw,rw);
  append_type_for_width(bld,lw);
  bld->append(" lhs, ");
  append_type_for_width(bld,rw);
@@ -797,7 +604,7 @@ static void gen_add(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  w = wr->arith.w;
  b = (w + 7) >> 3;
  bld->newline();
- bld->appendFormat("struct internal_bit_%u add_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
+ bld->appendFormat("static __always_inline struct internal_bit_%u add_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
  // really need only u9, but can't count on that existing, ugh
@@ -824,7 +631,7 @@ static void gen_sub(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  w = wr->arith.w;
  b = (w + 7) >> 3;
  bld->newline();
- bld->appendFormat("struct internal_bit_%u sub_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
+ bld->appendFormat("static __always_inline struct internal_bit_%u sub_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
  // really need only u9, but can't count on that existing, ugh
@@ -852,7 +659,7 @@ static void gen_mul(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  w = wr->arith.w;
  b = (w + 7) >> 3;
  bld->newline();
- bld->appendFormat("struct internal_bit_%u mul_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
+ bld->appendFormat("static __always_inline struct internal_bit_%u mul_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
  bld->append(" u32 a;\n");
@@ -883,7 +690,7 @@ static void gen_bxsmul(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  sv = wr->bxsmul.sv;
  b = (bw + 7) >> 3;
  bld->newline();
- bld->appendFormat("struct internal_bit_%u bxsmul_%u_%u(struct internal_bit_%u arg)\n",bw,bw,sv,bw,bw);
+ bld->appendFormat("static __always_inline struct internal_bit_%u bxsmul_%u_%u(struct internal_bit_%u arg)\n",bw,bw,sv,bw,bw);
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",bw);
  bld->append(" u32 a;\n");
@@ -916,6 +723,7 @@ static void gen_cast(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  tb2 = (tw + 7) >> 3;
  assert(((fw>64)||(tw>64))&&(fw!=tw));
  bld->newline();
+ bld->append("static __always_inline ");
  append_type_for_width(bld,tw);
  bld->appendFormat(" cast_%d_to_%u(",fw,tw);
  append_type_for_width(bld,fw);
@@ -975,7 +783,7 @@ static void gen_neg(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  w = wr->arith.w;
  assert(w > 64);
  bld->newline();
- bld->appendFormat("struct internal_bit_%u neg_%u(struct internal_bit_%u arg)\n",w,w,w);
+ bld->appendFormat("static __always_inline struct internal_bit_%u neg_%u(struct internal_bit_%u arg)\n",w,w,w);
  bld->append("{\n"/*}*/);
  bld->append(" u16 a;\n");
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
@@ -1001,7 +809,7 @@ static void gen_not(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  w = wr->arith.w;
  assert(w > 64);
  bld->newline();
- bld->appendFormat("struct internal_bit_%u not_%u(struct internal_bit_%d arg)\n",w,w,w);
+ bld->appendFormat("static __always_inline struct internal_bit_%u not_%u(struct internal_bit_%d arg)\n",w,w,w);
  bld->append("{\n"/*}*/);
  bld->append(" u16 a;\n");
  bld->append("\n");
@@ -1030,7 +838,7 @@ static void gen_shl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  sv = wr->shift_c.sv;
  assert((lw > 64) && (sv < lw));
  bld->newline();
- bld->appendFormat("struct internal_bit_%u shl_%u_c_%u(struct internal_bit_%u v)\n",lw,lw,sv,lw);
+ bld->appendFormat("static __always_inline struct internal_bit_%u shl_%u_c_%u(struct internal_bit_%u v)\n",lw,lw,sv,lw);
  bld->append("{\n"/*}*/);
  if (sv == 0)
   { /*
@@ -1087,6 +895,7 @@ static void gen_shrl_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  sv = wr->shift_c.sv;
  assert(lw > 64);
  bld->newline();
+ bld->append("static __always_inline ");
  append_type_for_width(bld,lw);
  bld->appendFormat(" shrl_%u_c_%u(",lw,sv);
  append_type_for_width(bld,lw);
@@ -1173,6 +982,7 @@ static void gen_shra_c(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  sv = wr->shift_c.sv;
  assert(lw > 64);
  bld->newline();
+ bld->append("static __always_inline ");
  append_type_for_width(bld,lw);
  bld->appendFormat(" shra_%u_c_%u(",lw,sv);
  append_type_for_width(bld,lw);
@@ -1356,6 +1166,7 @@ static void gen_shl_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  rw = wr->shift_x.rw;
  assert((lw > 64) || (rw > 64));
  bld->newline();
+ bld->append("static __always_inline ");
  append_type_for_width(bld,lw);
  bld->appendFormat(" shl_%u_x_%u(",lw,rw);
  append_type_for_width(bld,lw);
@@ -1422,6 +1233,7 @@ static void gen_shrl_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  rw = wr->shift_x.rw;
  assert((lw > 64) || (rw > 64));
  bld->newline();
+ bld->append("static __always_inline ");
  append_type_for_width(bld,lw);
  bld->appendFormat(" shrl_%u_x_%u(",lw,rw);
  append_type_for_width(bld,lw);
@@ -1479,6 +1291,7 @@ static void gen_shra_x(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  rw = wr->shift_x.rw;
  assert((lw > 64) || (rw > 64));
  bld->newline();
+ bld->append("static __always_inline ");
  append_type_for_width(bld,lw);
  bld->appendFormat(" shra_%u_x_%u(",lw,rw);
  append_type_for_width(bld,lw);
@@ -1566,7 +1379,7 @@ static void gen_cmp(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  assert(wr->type == WR_CMP);
  w = wr->cmp.w;
  bld->newline();
- bld->appendFormat("int cmp_%s_%u_%s(internal_bit_%u l, internal_bit_%u r)\n",
+ bld->appendFormat("static __always_inline int cmp_%s_%u_%s(internal_bit_%u l, internal_bit_%u r)\n",
 	(wr->cmp.cmp & CMP_SIGNED) ? "s" : "u",
 	w,
 	cmp_string(wr->cmp.cmp&CMP_BASE),
@@ -1632,7 +1445,7 @@ static void gen_bitop(WRTYPE wrt, EBPF::CodeBuilder *bld, const WIDTH_REC *wr, c
  w = wr->arith.w;
  b = (w + 7) >> 3;
  bld->newline();
- bld->appendFormat("struct internal_bit_%d %s_%d(struct internal_bit_%d lhs, struct internal_bit_%d rhs)\n",w,name,w,w,w);
+ bld->appendFormat("static __always_inline struct internal_bit_%d %s_%d(struct internal_bit_%d lhs, struct internal_bit_%d rhs)\n",w,name,w,w,w);
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%d ret;\n",w);
  bld->append("\n");
@@ -1675,6 +1488,7 @@ static void gen_addsat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  w = wr->sarith.w;
  b = (w + 7) >> 3;
  bld->newline();
+ bld->append("static __always_inline ");
  append_type_for_width(bld,w);
  bld->appendFormat(" addsat_%d(",w);
  append_type_for_width(bld,w);
@@ -1770,6 +1584,7 @@ static void gen_subsat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  w = wr->sarith.w;
  b = (w + 7) >> 3;
  bld->newline();
+ bld->append("static __always_inline ");
  append_type_for_width(bld,w);
  bld->appendFormat(" subsat_%d(",w);
  append_type_for_width(bld,w);
@@ -1827,13 +1642,24 @@ static void gen_subsat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(/*{*/"}\n");
 }
 
+/*
+ * The reason we have assign_* functions at all is that it's the
+ *  easiest way to get the RHS into an addressible temporary, so we can
+ *  memcpy out of it.  If we were to try to generate the code inline by
+ *  hand, we'd have trouble because the RHS may not have an address
+ *  (from a C perspective, that is; it usually will be stored in memory
+ *  and thus will have an address at the machine-language level) and
+ *  thus may not be a suitable argument to unary &.  Making this a
+ *  function forces the compiler to create a temporary as necessary.
+ */
 static void gen_assign(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
 {
  unsigned int w;
 
  assert(wr->type == WR_ASSIGN);
  w = wr->assign.w;
- bld->appendFormat("void assign_%u(u8 *lhs, ",w);
+ bld->newline();
+ bld->appendFormat("static __always_inline void assign_%u(u8 *lhs, ",w);
  append_type_for_width(bld,w);
  bld->append(" rhs)\n");
  bld->append("{\n"/*}*/);
@@ -1841,12 +1667,56 @@ static void gen_assign(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(/*{*/"}\n");
 }
 
-void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
+void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 {
  int i;
 
+ bld->appendLine("// These do not belong in the *_parser.h file!");
+ bld->appendLine("// XXX Figure out a better place for them.");
  bld->newline();
- bld->appendLine("// XXX Figure out a better place for these.");
+ for (i=0;i<nwr;i++)
+  { switch (wrv[i].type)
+     { case WR_VALUE:
+    	  bld->appendFormat("struct internal_bit_%d {\n",wrv[i].value);
+	  bld->appendFormat("  u8 bits[%d];\n",(wrv[i].value+7)>>3);
+	  bld->appendLine("};");
+	  break;
+       case WR_CONCAT:
+       case WR_ADD:
+       case WR_SUB:
+       case WR_MUL:
+       case WR_BXSMUL:
+       case WR_CAST:
+       case WR_NEG:
+       case WR_NOT:
+       case WR_SHL_X:
+       case WR_SHL_C:
+       case WR_SHRA_X:
+       case WR_SHRA_C:
+       case WR_SHRL_X:
+       case WR_SHRL_C:
+       case WR_CMP:
+       case WR_BITAND:
+       case WR_BITOR:
+       case WR_BITXOR:
+       case WR_ADDSAT:
+       case WR_SUBSAT:
+       case WR_ASSIGN:
+	  break;
+       default:
+	  abort();
+	  break;
+     }
+  }
+ bld->newline();
+ bld->append("\
+/*\n\
+ * These are here because EBPF quasi-C does not support aggregate\n\
+ *  return - but this is a code-generation thing, not a language thing,\n\
+ *  so if we force them to be inlined, it works fine.  It's easier to\n\
+ *  generate them here than into the .c file, plus this way they're\n\
+ *  available to everything that includes this file.\n\
+ */\n");
  for (i=0;i<nwr;i++)
   { switch (wrv[i].type)
      { case WR_VALUE:
@@ -1919,6 +1789,11 @@ void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
 	  break;
      }
   }
+}
+
+void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
+{
+ (void)bld; // empty at the moment
 }
 
 bool Backend::process() {
@@ -2033,7 +1908,7 @@ void Backend::serialize() const {
     if (widths) {
 	widths->dump();
 	widths->gen_h(&h);
-	widths->gen_c(&c);
+	widths->gen_c(&c); 
     } else {
 	std::cout << "No widths\n";
     }
