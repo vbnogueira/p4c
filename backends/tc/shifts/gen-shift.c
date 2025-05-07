@@ -237,7 +237,7 @@ static void gen_shl_c(BUILDER *bld, const WIDTH_REC *wr)
     sv &= 7;
     if (sv) bld->append(" u16 a;\n");
     bld->newline();
-    if (o) bld->appendFormat(" __builtin_memset(&rv.bits[0],0,%u);\n",o);
+    if (o) bld->appendFormat(" __builtin_memset(&rv.bits[%u],0,%u);\n",((lw+7)>>3)-o,o);
     if (sv)
      { pref = "";
        suff = "";
@@ -246,19 +246,19 @@ static void gen_shl_c(BUILDER *bld, const WIDTH_REC *wr)
        i = 0;
        nb = lw >> 3;
        for (;o<nb;o++,i++)
-	{ bld->appendFormat(" a = %sv.bits[%u] << %u%s;\n",pref,i,sv,suff);
+	{ bld->appendFormat(" a = %sv.bits[%u] << %u%s;\n",pref,nb-i,sv,suff);
 	  pref = "(a >> 8) | (";
 	  suff = ")";
-	  bld->appendFormat(" rv.bits[%u] = a & 255;\n",o);
+	  bld->appendFormat(" rv.bits[%u] = a & 255;\n",nb-o);
 	}
        if (lw & 7)
-	{ bld->appendFormat(" a = %sv.bits[%u] << %u%s;\n",pref,i,sv,suff);
-	  bld->appendFormat(" rv.bits[%u] = a & %u;\n",o,(1U<<(lw&7))-1U);
+	{ bld->appendFormat(" a = %sv.bits[%u] << %u%s;\n",pref,nb-i,sv,suff);
+	  bld->appendFormat(" rv.bits[%u] = a & %u;\n",nb-o,(1U<<(lw&7))-1U);
 	}
      }
     else
-     { bld->appendFormat(" __builtin_memcpy(&rv.bits[%u],&v.bits[0],%u);\n",o,(lw>>3)-o);
-       if (lw & 7) bld->appendFormat(" rv.bits[%u] = v.bits[%u] & %u;\n",lw>>3,(lw>>3)-o,(1U<<(lw&7))-1U);
+     { bld->appendFormat(" __builtin_memcpy(&rv.bits[1],&v.bits[%u],%u);\n",o+1,(lw>>3)-o);
+       if (lw & 7) bld->appendFormat(" rv.bits[0] = v.bits[%u] & %u;\n",o,(1U<<(lw&7))-1U);
      }
     bld->append(" return(rv);\n");
   }
@@ -296,53 +296,53 @@ static void gen_shrl_c(BUILDER *bld, const WIDTH_REC *wr)
     if (sv >= (lw & ~7U))
      { // No bits survive from anything below the top byte of v
        bld->newline();
-       bld->appendFormat(" __builtin_memset(&rv.bits[1],0,%u);\n",(lw-1)>>3);
+       bld->appendFormat(" __builtin_memset(&rv.bits[0],0,%u);\n",(lw-1)>>3);
        if (sv == (lw & ~7U))
-	{ bld->appendFormat(" rv.bits[0] = v.bits[%u]",(lw-1)>>3);
+	{ bld->appendFormat(" rv.bits[%u] = v.bits[0]",(lw-1)>>3);
 	  if (lw & 7) bld->appendFormat(" & %u",(1U<<(lw&7))-1);
 	  bld->append(";\n");
 	}
        else if (lw & 7)
-	{ bld->appendFormat(" rv.bits[0] = (v.bits[%u] & %u) >> %u;\n",(lw-1)>>3,(1U<<(lw&7))-1U,sv-(lw&~7U));
+	{ bld->appendFormat(" rv.bits[%u] = (v.bits[0] & %u) >> %u;\n",(lw-1)>>3,(1U<<(lw&7))-1U,sv-(lw&~7U));
 	}
        else
-	{ bld->appendFormat(" rv.bits[0] = v.bits[%u] >> %u;\n",(lw-1)>>3,sv-(lw&~7U));
+	{ bld->appendFormat(" rv.bits[%u] = v.bits[0] >> %u;\n",(lw-1)>>3,sv-(lw&~7U));
 	}
      }
     else if (! (sv & 7))
      { if (lw & 7)
-	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[0],&v.bits[%u],%u);\n",sv>>3,(lw-sv)>>3);
-	  bld->appendFormat(" rv.bits[%u] = v.bits[%u] & %u;\n",(lw-sv)>>3,lw>>3,(1U<<(lw&7))-1U);
-	  bld->appendFormat(" __builtin_memset(&rv.bits[%u],0,%u);\n",((lw-sv)>>3)+1,sv>>3);
+	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[%u],&v.bits[0],%u);\n",sv>>3,(lw-sv)>>3);
+	  bld->appendFormat(" rv.bits[%u] = v.bits[%u] & %u;\n",lw>>3,(lw-sv)>>3,(1U<<(lw&7))-1U);
+	  bld->appendFormat(" __builtin_memset(&rv.bits[0],0,%u);\n",sv>>3);
 	}
        else
-	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[0],&v.bits[%u],%u);\n",sv>>3,(lw-sv)>>3);
-	  bld->appendFormat(" __builtin_memset(&rv.bits[%u],0,%u);\n",(lw-sv)>>3,sv>>3);
+	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[%u],&v.bits[0],%u);\n",sv>>3,(lw-sv)>>3);
+	  bld->appendFormat(" __builtin_memset(&rv.bits[0],0,%u);\n",sv>>3);
 	}
      }
     else
      { bld->append(" u32 a;\n");
        bld->newline();
-       bld->append(" a = ");
-       if (lw & 7) bld->appendFormat("v.bits[%u] & %u",lw>>3,(1U<<(lw&7))-1); else bld->appendFormat("v.bits[%u]",(lw>>3)-1);
+       bld->append(" a = v.bits[0]");
+       if (lw & 7) bld->appendFormat(" & %u",(1U<<(lw&7))-1);
        bld->append(";\n");
        s = 8 + ((lw - 1) & 7) - ((lw - 1 - sv) & 7);
        j = (lw - 9) >> 3;
        i = (lw - 1 - sv) >> 3;
-       if (i < ((lw-1)>>3)) bld->appendFormat(" __builtin_memset(&rv.bits[%u],0,%u);\n",i+1,((lw+7)>>3)-(i+1));
-       for (i=(lw-1-sv)>>3;i>0;i--,j--)
-	{ bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",j);
-	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & 255;\n",i,s);
+       if (i < ((lw-1)>>3)) bld->appendFormat(" __builtin_memset(&rv.bits[0],0,%u);\n",((lw+7)>>3)-(i+1));
+       for (;i>0;i--,j--)
+	{ bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",(lw>>3)-j);
+	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & 255;\n",(lw>>3)-i,s);
 	}
        if (s == 8)
-	{ bld->appendFormat(" rv.bits[%u] = a & 255;\n",i);
+	{ bld->appendFormat(" rv.bits[%u] = a & 255;\n",(lw>>3)-i);
 	}
        else if (s > 8)
-	{ bld->appendFormat(" rv.bits[%u] = (a >> %u) & 255;\n",i,s-8);
+	{ bld->appendFormat(" rv.bits[%u] = (a >> %u) & 255;\n",(lw>>3)-i,s-8);
 	}
        else
-	{ bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",j);
-	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & 255;\n",i,s);
+	{ bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",(lw>>3)-j);
+	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & 255;\n",(lw>>3)-i,s);
 	}
      }
     bld->append(" return(rv);\n");
@@ -385,51 +385,51 @@ static void gen_shra_c(BUILDER *bld, const WIDTH_REC *wr)
        if (sv == lw-1)
 	{ // All bits copies of sign bit
 	  if (lw & 7)
-	   { bld->appendFormat(" __builtin_memset(&rv.bits[0],(v.bits[%u]&%u)?255:0,%u);\n",lw>>3,1U<<((lw-1)&7),lw>>3);
-	     bld->appendFormat(" rv.bits[%u] = (v.bits[%u] & %u) ? %u : 0;\n",lw>>3,lw>>3,1U<<((lw-1)&7),(1U<<(lw&7))-1U);
+	   { bld->appendFormat(" __builtin_memset(&rv.bits[1],(v.bits[0]&%u)?255:0,%u);\n",1U<<((lw-1)&7),lw>>3);
+	     bld->appendFormat(" rv.bits[0] = (v.bits[0] & %u) ? %u : 0;\n",1U<<((lw-1)&7),(1U<<(lw&7))-1U);
 	   }
 	  else
-	   { bld->appendFormat(" __builtin_memset(&rv.bits[0],(v.bits[%u]&%u)?255:0,%u);\n",(lw>>3)-1,1U<<((lw-1)&7),lw>>3);
+	   { bld->appendFormat(" __builtin_memset(&rv.bits[0],(v.bits[0]&%u)?255:0,%u);\n",1U<<((lw-1)&7),lw>>3);
 	   }
 	}
        else
 	{ if (lw & 7)
-	   { bld->appendFormat(" if (v.bits[%u] & %u)\n",(lw-1)>>3,1U<<((lw-1)&7));
-	     bld->appendFormat("  { __builtin_memset(&rv.bits[1],255,%u);\n"/*}*/,(lw>>3)-1);
-	     bld->appendFormat("    rv.bits[%u] = %u;\n",(lw-1)>>3,(1U<<(lw&7))-1U);
+	   { bld->appendFormat(" if (v.bits[0] & %u)\n",1U<<((lw-1)&7));
+	     bld->appendFormat("  { __builtin_memset(&rv.bits[0],255,%u);\n"/*}*/,(lw>>3)-1);
+	     bld->appendFormat("    rv.bits[0] = %u;\n",(1U<<(lw&7))-1U);
 	     bld->append(/*{*/"  }\n");
 	     bld->append(" else\n");
-	     bld->appendFormat("  { __builtin_memset(&rv.bits[1],0,%u);\n"/*}*/,lw>>3);
+	     bld->appendFormat("  { __builtin_memset(&rv.bits[0],0,%u);\n"/*}*/,lw>>3);
 	     bld->append(/*{*/"  }\n");
 	   }
 	  else
-	   { bld->appendFormat(" __builtin_memset(&rv.bits[1],(v.bits[%u]&128)?255:0,%u);\n",(lw-1)>>3,(lw-9)>>3);
+	   { bld->appendFormat(" __builtin_memset(&rv.bits[0],(v.bits[0]&128)?255:0,%u);\n",(lw-9)>>3);
 	   }
-	  bld->append(" rv.bits[0] = (");
+	  bld->appendFormat(" rv.bits[%u] = (",(lw-1)>>3);
 	  if (sv == (lw & ~7U))
-	   { bld->appendFormat("v.bits[%u]",(lw-1)>>3);
+	   { bld->appendFormat("v.bits[0]");
 	     if (lw & 7) bld->appendFormat(" & %u",(1U<<(lw&7))-1);
 	   }
 	  else if (lw & 7)
-	   { bld->appendFormat("(v.bits[%u] & %u) >> %u",(lw-1)>>3,(1U<<(lw&7))-1U,sv-(lw&~7U));
+	   { bld->appendFormat("(v.bits[0] & %u) >> %u",(1U<<(lw&7))-1U,sv-(lw&~7U));
 	   }
 	  else
-	   { bld->appendFormat("v.bits[%u] >> %u",(lw-1)>>3,sv-(lw&~7U));
+	   { bld->appendFormat("v.bits[0] >> %u",sv-(lw&~7U));
 	   }
-	  bld->appendFormat(") | ((v.bits[%u] & %u) ? %u : 0);\n",(lw-1)>>3,1U<<((lw-1)&7),(255U<<((lw-(sv&7))&7))&255U);
+	  bld->appendFormat(") | ((v.bits[0] & %u) ? %u : 0);\n",1U<<((lw-1)&7),(255U<<((lw-(sv&7))&7))&255U);
 	}
      }
     else if (! (sv & 7))
      { bld->newline();
        if (lw & 7)
-	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[0],&v.bits[%u],%u);\n",sv>>3,(lw+8-sv)>>3);
-	  bld->appendFormat(" rv.bits[%u] |= (v.bits[%u] & %u) ? %u : 0;\n",(lw-sv)>>3,lw>>3,1U<<((lw-1)&7),(255U<<(lw&7))&255U);
-	  if ((sv >> 3) > 1) bld->appendFormat(" __builtin_memset(&rv.bits[%u],(v.bits[%u]&%u)?255:0,%u);\n",((lw-sv)>>3)+1,lw>>3,1U<<((lw-1)&7),(sv>>3)-1);
-	  bld->appendFormat(" rv.bits[%u] = (v.bits[%u] & %u) ? %u : 0;\n",lw>>3,lw>>3,1U<<((lw-1)&7),(1U<<(lw&7))-1U);
+	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[%u],&v.bits[0],%u);\n",sv>>3,(lw+8-sv)>>3);
+	  bld->appendFormat(" rv.bits[%u] |= (v.bits[0] & %u) ? %u : 0;\n",(lw>>3)-((lw-sv)>>3),1U<<((lw-1)&7),(255U<<(lw&7))&255U);
+	  if ((sv >> 3) > 1) bld->appendFormat(" __builtin_memset(&rv.bits[%u],(v.bits[0]&%u)?255:0,%u);\n",(lw>>3)-(((lw-sv)>>3)+1),1U<<((lw-1)&7),(sv>>3)-1);
+	  bld->appendFormat(" rv.bits[0] = (v.bits[0] & %u) ? %u : 0;\n",1U<<((lw-1)&7),(1U<<(lw&7))-1U);
 	}
        else
-	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[0],&v.bits[%u],%u);\n",sv>>3,(lw-sv)>>3);
-	  bld->appendFormat(" __builtin_memset(&rv.bits[%u],(v.bits[%u]&128)?255:0,%u);\n",(lw-sv)>>3,(lw-1)>>3,sv>>3);
+	{ bld->appendFormat(" __builtin_memcpy(&rv.bits[%u],&v.bits[0],%u);\n",sv>>3,(lw-sv)>>3);
+	  bld->appendFormat(" __builtin_memset(&rv.bits[0],(v.bits[%u]&128)?255:0,%u);\n",(lw-1)>>3,sv>>3);
 	}
      }
     else
@@ -437,50 +437,43 @@ static void gen_shra_c(BUILDER *bld, const WIDTH_REC *wr)
        bld->newline();
        switch (lw & 7)
 	{ case 0:
-	     bld->appendFormat(" a = v.bits[%u] | ((v.bits[%u] & 128) ? ~(u32)255 : 0);\n",(lw-1)>>3,(lw-1)>>3);
+	     bld->append(" a = v.bits[0] | ((v.bits[0] & 128) ? ~(u32)255 : 0);\n");
 	     break;
 	  case 1:
-	     bld->appendFormat(" a = (v.bits[%u] & 1) ? ~(u32)0 : 0;\n",lw>>3);
+	     bld->append(" a = (v.bits[0] & 1) ? ~(u32)0 : 0;\n");
 	     break;
 	  default:
-	     bld->appendFormat(" a = (v.bits[%u] & %u) | ((v.bits[%u] & %u) ? ~(u32)%u : 0);\n",lw>>3,(1U<<(lw&7))-1,lw>>3,1U<<((lw-1)&7),(1U<<(lw&7))-1U);
+	     bld->appendFormat(" a = (v.bits[0] & %u) | ((v.bits[0] & %u) ? ~(u32)%u : 0);\n",(1U<<(lw&7))-1,1U<<((lw-1)&7),(1U<<(lw&7))-1U);
 	     break;
 	}
        s = 8 + ((lw - 1) & 7) - ((lw - 1 - sv) & 7);
        j = (lw - 9) >> 3;
        i = (lw - 1 - sv) >> 3;
        m = (lw & 7) ? (1U << (lw & 7)) - 1U : 255;
-       bld->append("// a\n");
        if (i < ((lw-1) >> 3))
 	{ if (lw & 7)
-	   { bld->append("// b\n");
-	     if (((lw-1) >> 3) - i > 1) bld->appendFormat(" __builtin_memset(&rv.bits[%u],(v.bits[%u]&%u)?255:0,%u);\n",i+1,(lw-1)>>3,1U<<((lw-1)&7),((lw-1)>>3)-i-1);
-	     bld->appendFormat(" rv.bits[%u] = (v.bits[%u] & %u) ? %u : 0;\n",(lw-1)>>3,(lw-1)>>3,1U<<((lw-1)&7),(1U<<(lw&7))-1U);
+	   { if (((lw-1) >> 3) - i > 1) bld->appendFormat(" __builtin_memset(&rv.bits[1],(v.bits[0]&%u)?255:0,%u);\n",1U<<((lw-1)&7),((lw-1)>>3)-i-1);
+	     bld->appendFormat(" rv.bits[0] = (v.bits[0] & %u) ? %u : 0;\n",1U<<((lw-1)&7),(1U<<(lw&7))-1U);
 	     m = 255;
 	   }
 	  else
-	   { bld->append("// c\n");
-	     bld->appendFormat(" __builtin_memset(&rv.bits[%u],(v.bits[%u]&%u)?255:0,%u);\n",i+1,(lw-1)>>3,1U<<((lw-1)&7),((lw-1)>>3)-i);
+	   { bld->appendFormat(" __builtin_memset(&rv.bits[%u],(v.bits[0]&%u)?255:0,%u);\n",((lw-1)>>3)-(i+1),1U<<((lw-1)&7),((lw-1)>>3)-i);
 	   }
 	}
-       bld->append("// d\n");
        for (;i>0;i--,j--)
-	{ bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",j);
-	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & %u;\n",i,s,m);
+	{ bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",((lw-1)>>3)-j);
+	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & %u;\n",((lw-1)>>3)-i,s,m);
 	  m = 255;
 	}
        if (s == 8)
-	{ bld->append("// e\n");
-	  bld->appendFormat(" rv.bits[%u] = a & %u;\n",i,m);
+	{ bld->appendFormat(" rv.bits[%u] = a & %u;\n",((lw-1)>>3)-i,m);
 	}
        else if (s > 8)
-	{ bld->append("// f\n");
-	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & %u;\n",i,s-8,m);
+	{ bld->appendFormat(" rv.bits[%u] = (a >> %u) & %u;\n",((lw-1)>>3)-i,s-8,m);
 	}
        else
-	{ bld->append("// g\n");
-	  bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",j);
-	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & %u;\n",i,s,m);
+	{ bld->appendFormat(" a = (a << 8) | v.bits[%u];\n",((lw-1)>>3)-j);
+	  bld->appendFormat(" rv.bits[%u] = (a >> %u) & %u;\n",((lw-1)>>3)-i,s,m);
 	}
      }
     bld->append(" return(rv);\n");
@@ -572,21 +565,20 @@ static void gen_shl_x(BUILDER *bld, const WIDTH_REC *wr)
   }
  else
   { if (rw > 3)
-     { bld->appendFormat("    for (o=0;%s>=8;o++,%s-=8) rv.bits[o] = 0;\n",shvar,shvar);
-       bld->appendFormat("    a = 0;\n");
-       bld->appendFormat("    left = %u - (8 * o);\n",lw);
-       bld->append      ("    for (i=0;left>=8;left-=8)\n");
+     { bld->appendFormat("    for (o=%u,left=%u;%s>=8;o--,%s-=8,left-=8) rv.bits[o] = 0;\n",(lw-1)>>3,lw,shvar,shvar);
+       bld->append      ("    a = 0;\n");
+       bld->appendFormat("    for (i=%u;left>=8;left-=8)\n",(lw-1)>>3);
      }
     else
      { bld->appendFormat("    a = 0;\n");
-       bld->appendFormat("    for (i=0,o=0,left=%u;left>=8;left-=8)\n",lw);
+       bld->appendFormat("    for (i=o=%u,left=%u;left>=8;left-=8)\n",(lw-1)>>3,lw);
      }
-    bld->appendFormat("     { a = (a >> 8) | (v.bits[i++] << %s);\n"/*}*/,shvar);
-    bld->append      ("       rv.bits[o++] = a & 255;\n");
+    bld->appendFormat("     { a = (a >> 8) | (v.bits[i--] << %s);\n"/*}*/,shvar);
+    bld->append      ("       rv.bits[o--] = a & 255;\n");
     bld->append (/*{*/"     }\n");
     bld->append      ("    if (left)\n");
-    bld->appendFormat("     { if (left > %s) a = (a >> 8) | (v.bits[i++] << %s); else a >>= 8;\n"/*}*/,shvar,shvar);
-    bld->append      ("       rv.bits[o++] = a & ((1U << left) - 1);\n");
+    bld->appendFormat("     { if (left > %s) a = (a >> 8) | (v.bits[i--] << %s); else a >>= 8;\n"/*}*/,shvar,shvar);
+    bld->append      ("       rv.bits[o--] = a & ((1U << left) - 1);\n");
     bld->append (/*{*/"     }\n");
     bld->append      ("    return(rv);\n");
   }
@@ -623,8 +615,8 @@ static void gen_shrl_x(BUILDER *bld, const WIDTH_REC *wr)
  if (rw > 64) bld->append(" unsigned int s;\n");
  if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
  bld->append(" u16 a;\n");
- bld->append(" unsigned int i;\n");
- bld->append(" unsigned int o;\n");
+ bld->append(" int i;\n");
+ bld->append(" int o;\n");
  bld->newline();
  gen_sh_x_shvar(bld,lw,rw,"sh","s",&shvar);
  // the value in the variable named by shvar is < lw, now
@@ -633,17 +625,17 @@ static void gen_shrl_x(BUILDER *bld, const WIDTH_REC *wr)
   { bld->appendFormat("    return(v>>%s);\n",shvar);
   }
  else
-  { bld->appendFormat("    i = %s >> 3;\n",shvar);
+  { bld->appendFormat("    i = %u - (%s >> 3);\n",(lw-1)>>3,shvar);
     bld->appendFormat("    %s = 8 - (%s & 7ULL);\n",shvar,shvar);
-    bld->appendFormat("    a = v.bits[i++] << %s;\n",shvar);
-    bld->append      ("    o = 0;\n");
-    bld->appendFormat("    for (;i<%u;i++)\n",(lw+7)>>3);
+    bld->appendFormat("    a = v.bits[i--] << %s;\n",shvar);
+    bld->appendFormat("    o = %u;\n",(lw-1)>>3);
+    bld->append      ("    for (;i>=0;i--)\n");
     bld->appendFormat("     { a = (a >> 8) | (v.bits[i] << %s);\n"/*}*/,shvar);
-    bld->appendFormat("       rv.bits[o++] = a & 255;\n");
+    bld->appendFormat("       rv.bits[o--] = a & 255;\n");
     bld->append      (/*{*/"     }\n");
     if (lw & 7) bld->appendFormat("    a &= %u << %s;\n",(1U<<(lw&7))-1U,shvar);
-    bld->append      ("    rv.bits[o++] = a >> 8;\n");
-    bld->appendFormat("    for (;o<%u;o++) rv.bits[o] = 0;\n",(lw+7)>>3);
+    bld->append      ("    rv.bits[o--] = a >> 8;\n");
+    bld->append      ("    for (;o>=0;o--) rv.bits[o] = 0;\n");
     bld->append      ("    return(rv);\n");
   }
  bld->append(/*{*/"  } while (0);\n");
@@ -680,8 +672,8 @@ static void gen_shra_x(BUILDER *bld, const WIDTH_REC *wr)
  if (rw > 64) bld->append(" unsigned int s;\n");
  if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv = randinit();\n",lw);
  bld->append(" u16 a;\n");
- bld->append(" unsigned int i;\n");
- bld->append(" unsigned int o;\n");
+ bld->append(" int i;\n");
+ bld->append(" int o;\n");
  bld->append(" u8 sign;\n");
  bld->newline();
  gen_sh_x_shvar(bld,lw,rw,"sh","s",&shvar);
@@ -692,46 +684,46 @@ static void gen_shra_x(BUILDER *bld, const WIDTH_REC *wr)
   }
  else
   { bld->appendFormat("    if (! %s) return(v);\n",shvar);
-    bld->appendFormat("    sign = (v.bits[%u] & %u) ? 255 : 0;\n",(lw-1)>>3,1U<<((lw-1)&7));
+    bld->appendFormat("    sign = (v.bits[0] & %u) ? 255 : 0;\n",1U<<((lw-1)&7));
     bld->appendFormat("    i = %s >> 3;\n",shvar);
     bld->appendFormat("    %s = 8 - (%s & 7ULL);\n",shvar,shvar);
     if (lw & 7)
-     { bld->appendFormat("    a = ((i == %u) ? (v.bits[%u] & %u) | ((sign << %u) & 255) : v.bits[i]) << %s;\n",
-		(lw-1)>>3, (lw-1)>>3, (1U<<(lw&7))-1U, lw&7, shvar);
+     { bld->appendFormat("    a = ((i == %u) ? (v.bits[0] & %u) | ((sign << %u) & 255) : v.bits[%u-i]) << %s;\n",
+		lw>>3, (1U<<(lw&7))-1U, lw&7, lw>>3, shvar);
        bld->append      ("    i ++;\n");
-       bld->append      ("    o = 0;\n");
-       bld->appendFormat("    for (;i<%u;i++)\n",(lw-1)>>3);
+       bld->appendFormat("    o = %u;\n",lw>>3);
+       bld->appendFormat("    for (i=%u-i;i>0;i--)\n",lw>>3);
        bld->appendFormat("     { a = (a >> 8) | (v.bits[i] << %s);\n"/*}*/,shvar);
-       bld->appendFormat("       rv.bits[o++] = a & 255;\n");
+       bld->appendFormat("       rv.bits[o--] = a & 255;\n");
        bld->append      (/*{*/"     }\n");
-       bld->appendFormat("    if (i == %u)\n",(lw-1)>>3);
-       bld->appendFormat("     { a = (a >> 8) | ((v.bits[%u] & %u) << %s) | (sign << (%s + %u));\n"/*}*/,
-		(lw-1)>>3, (1U<<(lw&7))-1U, shvar, shvar, lw&7);
-       bld->append      ("       rv.bits[o] = a & 255;\n");
-       bld->append      ("       o ++;\n");
+       bld->append      ("    if (i == 0)\n");
+       bld->appendFormat("     { a = (a >> 8) | ((v.bits[0] & %u) << %s) | (sign << (%s + %u));\n"/*}*/,
+		(1U<<(lw&7))-1U, shvar, shvar, lw&7);
+       bld->append      ("       rv.bits[o--] = a & 255;\n");
        bld->append      (/*{*/"     }\n");
        bld->appendFormat("    a |= sign << (8 + %s);\n",shvar);
-       bld->appendFormat("    if (o == %u)\n",(lw-1)>>3);
-       bld->appendFormat("     { rv.bits[o++] = (a >> 8) & %u;\n"/*}*/,(1U<<(lw&7))-1U);
+       bld->append      ("    if (o == 0)\n");
+       bld->appendFormat("     { rv.bits[o--] = (a >> 8) & %u;\n"/*}*/,(1U<<(lw&7))-1U);
        bld->append      (/*{*/"     }\n");
        bld->append      ("    else\n");
-       bld->append      ("     { rv.bits[o++] = (a >> 8) & 255;\n"/*}*/);
-       bld->appendFormat("       for (;o<%u;o++) rv.bits[o] = sign;\n",(lw-1)>>3);
-       bld->appendFormat("       rv.bits[o] = sign & %u;\n",(1U<<(lw&7))-1U);
+       bld->append      ("     { rv.bits[o--] = (a >> 8) & 255;\n"/*}*/);
+       bld->appendFormat("       for (;o>0;o--) rv.bits[o] = sign;\n");
+       bld->appendFormat("       rv.bits[0] = sign & %u;\n",(1U<<(lw&7))-1U);
        bld->append      (/*{*/"     }\n");
      }
     else
-     { bld->appendFormat("    a = v.bits[i++] << %s;\n",shvar);
-       bld->append      ("    o = 0;\n");
-       bld->appendFormat("    for (;i<%u;i++)\n",(lw+7)>>3);
+     { bld->appendFormat("    i = %u - i;\n",(lw-1)>>3);
+       bld->appendFormat("    a = v.bits[i] << %s;\n",shvar);
+       bld->appendFormat("    o = %u;\n",(lw-1)>>3);
+       bld->append      ("    for (;i>=0;i--)\n");
        bld->appendFormat("     { a = (a >> 8) | (v.bits[i] << %s);\n"/*}*/,shvar);
-       bld->appendFormat("       rv.bits[o++] = a & 255;\n");
+       bld->appendFormat("       rv.bits[o--] = a & 255;\n");
        bld->append      (/*{*/"     }\n");
-       bld->appendFormat("    if (o < %u)\n",(lw+7)>>3);
+       bld->append      ("    if (o > 0)\n");
        bld->appendFormat("     { a = (a >> 8) | (sign << %s);\n"/*}*/,shvar);
-       bld->appendFormat("       rv.bits[o++] = a & 255;\n");
+       bld->appendFormat("       rv.bits[o--] = a & 255;\n");
        bld->append      (/*{*/"     }\n");
-       bld->appendFormat("    for (;o<%u;o++) rv.bits[o] = sign;\n",(lw+7)>>3);
+       bld->append      ("    for (;o>=0;o--) rv.bits[o] = sign;\n");
      }
     bld->append      ("    return(rv);\n");
   }
@@ -741,9 +733,9 @@ static void gen_shra_x(BUILDER *bld, const WIDTH_REC *wr)
   { bld->appendFormat("(v&%lluULL)?%lluULL:0",1ULL<<(lw-1),((1ULL<<(lw-1))<<1)|1ULL);
   }
  else
-  { bld->appendFormat("(v.bits[%u]&%u)?(struct internal_bit_%u){{"/*}}*/,(lw-1)>>3,1U<<((lw-1)&7),lw);
-    for (i=(lw-1)>>3;i>0;i--) bld->append("255,");
+  { bld->appendFormat("(v.bits[0]&%u)?(struct internal_bit_%u){{"/*}}*/,1U<<((lw-1)&7),lw);
     bld->appendFormat("%u",(1U<<(((lw-1)&7)+1))-1);
+    for (i=(lw-1)>>3;i>0;i--) bld->append(",255");
     bld->appendFormat(/*{{*/"}}:(struct internal_bit_%u){{0}}",lw);
   }
  bld->append(");\n");
@@ -769,7 +761,7 @@ static void gen_slow_shl(int w)
     fprintf(bf," if (s == 0) return(v);\n");
     fprintf(bf," r = (struct internal_bit_%d){{0}};\n",w);
     fprintf(bf," if (s < %d)\n",w);
-    fprintf(bf,"  { for (i=%d,j=%d-s;j>=0;i--,j--) if ((v.bits[j>>3]>>(j&7)) & 1) r.bits[i>>3] |= 1 << (i & 7);\n"/*}*/,w-1,w-1);
+    fprintf(bf,"  { for (i=0,j=s;j<%d;i++,j++) if ((v.bits[%d-(i>>3)]>>(i&7)) & 1) r.bits[%d-(j>>3)] |= 1 << (j & 7);\n"/*}*/,w,(w-1)>>3,(w-1)>>3);
     fprintf(bf,/*{*/"  }\n");
     fprintf(bf," return(r);\n");
     fprintf(bf,/*{*/"}\n");
@@ -795,8 +787,7 @@ static void gen_slow_shrl(int w)
     fprintf(bf," if (s == 0) return(v);\n");
     fprintf(bf," r = (struct internal_bit_%d){{0}};\n",w);
     fprintf(bf," if (s < %d)\n",w);
-    fprintf(bf,"  { for (i=%d,j=%d-s;j>=0;i--,j--)\n"/*}*/,w-1,w-1);
-    fprintf(bf,"    if ((v.bits[i>>3]>>(i&7)) & 1) r.bits[j>>3] |= 1 << (j & 7);\n");
+    fprintf(bf,"  { for (i=0,j=s;j<%d;i++,j++) if ((v.bits[%d-(j>>3)]>>(j&7)) & 1) r.bits[%d-(i>>3)] |= 1 << (i & 7);\n"/*}*/,w,(w-1)>>3,(w-1)>>3);
     fprintf(bf,/*{*/"  }\n");
     fprintf(bf," return(r);\n");
     fprintf(bf,/*{*/"}\n");
@@ -824,13 +815,13 @@ static void gen_slow_shra(int w)
     fprintf(bf," if (s == 0) return(v);\n");
     fprintf(bf," r = (struct internal_bit_%d){{0}};\n",w);
     if ((w & 7) == 1)
-     { fprintf(bf," sb = v.bits[%d] & 1;\n",w>>3);
+     { fprintf(bf," sb = v.bits[0] & 1;\n");
      }
     else
-     { fprintf(bf," sb = (v.bits[%d] >> %d) & 1;\n",(w-1)>>3,(w+7)&7);
+     { fprintf(bf," sb = (v.bits[0] >> %d) & 1;\n",(w+7)&7);
      }
     fprintf(bf,"  { for (i=%d;i>=0;i--)\n"/*}*/,w-1);
-    fprintf(bf,"    if ((i >= %d-s) ? sb : ((v.bits[(i+s)>>3] >> ((i+s)&7)) & 1)) r.bits[i>>3] |= 1 << (i & 7);\n",w-1);
+    fprintf(bf,"    if ((i >= %d-s) ? sb : ((v.bits[%d-((i+s)>>3)] >> ((i+s)&7)) & 1)) r.bits[%d-(i>>3)] |= 1 << (i & 7);\n",w-1,(w-1)>>3,(w-1)>>3);
     fprintf(bf,/*{*/"  }\n");
     fprintf(bf," return(r);\n");
     fprintf(bf,/*{*/"}\n");
@@ -893,13 +884,13 @@ static void gen_c_tester(const char *kind, int lw, int sv, const char *optext)
  fprintf(bf,"\n");
  fprintf(bf," printf(\"seed = %%u, loops = %%d\\n\",rseed,goodloops);\n");
  fprintf(bf," printf(\"v = \");");
- fprintf(bf," for (i=%d;i>=0;i--) printf(\"%%02x\",v.bits[i]);\n",(lw-1)>>3);
+ fprintf(bf," for (i=0;i<=%d;i++) printf(\"%%02x\",v.bits[i]);\n",(lw-1)>>3);
  fprintf(bf," printf(\" %s %%d:\\n\",sh);",optext);
  fprintf(bf," printf(\"s = \");");
- fprintf(bf," for (i=%d;i>=0;i--) printf(\"%%02x\",s.bits[i]);\n",(lw-1)>>3);
+ fprintf(bf," for (i=0;i<=%d;i++) printf(\"%%02x\",s.bits[i]);\n",(lw-1)>>3);
  fprintf(bf," printf(\"\\n\");");
  fprintf(bf," printf(\"f = \");");
- fprintf(bf," for (i=%d;i>=0;i--) printf(\"%%02x\",f.bits[i]);\n",(lw-1)>>3);
+ fprintf(bf," for (i=0;i<=%d;i++) printf(\"%%02x\",f.bits[i]);\n",(lw-1)>>3);
  fprintf(bf," printf(\"\\n\");\n");
  fprintf(bf," exit(1);\n");
  fprintf(bf,/*{*/"}\n");
@@ -920,7 +911,7 @@ static void gen_c_tester(const char *kind, int lw, int sv, const char *optext)
  fprintf(bf," srandom(time(0)^getpid());\n");
  fprintf(bf," for (i=%d;i>0;i--)\n",TESTCASES);
  fprintf(bf,"  { for (j=%d;j>=0;j--) v.bits[j] = (random() >> 22) & 255;\n"/*}*/,(lw-1)>>3);
- if (lw & 7) fprintf(bf,"    v.bits[%d] &= %d;\n",(lw-1)>>3,(1<<(lw&7))-1);
+ if (lw & 7) fprintf(bf,"    v.bits[0] &= %d;\n",(1<<(lw&7))-1);
  fprintf(bf,"    if (skiploops-- == 0) bkpt();\n");
  fprintf(bf,"    s = slow(v,%d);\n",sv);
  fprintf(bf,"    f = %s_%d_c_%d(v);\n",kind,lw,sv);
@@ -956,14 +947,14 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
   }
  else
   { fprintf(bf," printf(\"v = \");\n");
-    fprintf(bf," for (i=%d;i>=0;i--) printf(\"%%02x\",v.bits[i]);\n",(lw-1)>>3);
+    fprintf(bf," for (i=0;i<=%d;i++) printf(\"%%02x\",v.bits[i]);\n",(lw-1)>>3);
   }
  if (rw <= 64)
   { fprintf(bf," printf(\" %s 0x%%0%ullx:\\n\",(unsigned long long int)sh);",optext,(rw+3)>>2);
   }
  else
   { fprintf(bf," printf(\" %s 0x\");\n",optext);
-    fprintf(bf," for (i=%d;i>=0;i--) printf(\"%%02x\",sh.bits[i]);\n",(rw-1)>>3);
+    fprintf(bf," for (i=0;i<=%d;i++) printf(\"%%02x\",sh.bits[i]);\n",(rw-1)>>3);
     fprintf(bf," printf(\":\\n\");\n");
   }
  if (lw <= 64)
@@ -972,10 +963,10 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
   }
  else
   { fprintf(bf," printf(\"s = \");\n");
-    fprintf(bf," for (i=%d;i>=0;i--) printf(\"%%02x\",s.bits[i]);\n",(lw-1)>>3);
+    fprintf(bf," for (i=0;i<=%d;i++) printf(\"%%02x\",s.bits[i]);\n",(lw-1)>>3);
     fprintf(bf," printf(\"\\n\");\n");
     fprintf(bf," printf(\"f = \");\n");
-    fprintf(bf," for (i=%d;i>=0;i--) printf(\"%%02x\",f.bits[i]);\n",(lw-1)>>3);
+    fprintf(bf," for (i=0;i<=%d;i++) printf(\"%%02x\",f.bits[i]);\n",(lw-1)>>3);
     fprintf(bf," printf(\"\\n\");\n");
   }
  fprintf(bf," exit(1);\n");
@@ -1020,7 +1011,7 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
   }
  else
   { fprintf(bf,"for (j=%d;j>=0;j--) v.bits[j] = (random() >> 22) & 255;\n",(lw-1)>>3);
-    if (lw & 7) fprintf(bf,"    v.bits[%d] &= %d;\n",(lw-1)>>3,(1<<(lw&7))-1);
+    if (lw & 7) fprintf(bf,"    v.bits[0] &= %d;\n",(1<<(lw&7))-1);
   }
  if (sra)
   { if (lw <= 64)
@@ -1028,10 +1019,10 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
      }
     else
      { if ((lw - 1) & 7)
-	{ fprintf(bf,"    sign = (v.bits[%u] >> %u) & 1;\n",(lw-1)>>3,(lw-1)&7);
+	{ fprintf(bf,"    sign = (v.bits[0] >> %u) & 1;\n",(lw-1)&7);
 	}
        else
-	{ fprintf(bf,"    sign = v.bits[%u] & 1;\n",(lw-1)>>3);
+	{ fprintf(bf,"    sign = v.bits[0] & 1;\n");
 	}
      }
   }
@@ -1062,14 +1053,14 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
  else
   { fprintf(bf,"    if (random() %% 67)\n");
     fprintf(bf,"     { j = random() %% %d;\n"/*}*/,lw);
-    for (i=rw-1,j=0;i;i>>=8,j++)
-     { if (j) fprintf(bf,"       j >>= 8;\n");
+    for (i=rw-1,j=(rw-1)>>3;i;i>>=8,j--)
+     { if (i < rw-1) fprintf(bf,"       j >>= 8;\n");
        fprintf(bf,"       sh.bits[%d] = j & 255;\n",j);
      }
-    for (i=(rw+7)>>3;j<i;j++) fprintf(bf,"       sh.bits[%d] = 0;\n",j);
+    for (;j>0;j--) fprintf(bf,"       sh.bits[%d] = 0;\n",j);
     fprintf(bf,/*{*/"     }\n");
     fprintf(bf,"    else\n");
-    fprintf(bf,"     { for (k=0;k<%d;k++) sh.bits[k] = (random() >> 22) & 255;\n"/*}*/,(rw+7)>>3);
+    fprintf(bf,"     { for (k=%d;k>=0;k--) sh.bits[k] = (random() >> 22) & 255;\n"/*}*/,(rw-1)>>3);
     fprintf(bf,/*{*/"     }\n");
     fprintf(bf,"    sh_i = 0;\n");
     fprintf(bf,"    for (j=%u;j>=0;j--)\n",(rw-1)>>3);
@@ -1091,8 +1082,8 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
      { fprintf(bf,"sign ? (");
        append_type_for_width(&builder,lw);
        fprintf(bf,"){"/*}*/);
-       for (i=(lw-1)>>3;i>0;i--) fprintf(bf,"255,");
        fprintf(bf,"%u",(1U<<(((lw-1)&7)+1))-1);
+       for (i=(lw-1)>>3;i>0;i--) fprintf(bf,",255");
        fprintf(bf,/*{*/"} : ");
      }
     fprintf(bf,"(");
