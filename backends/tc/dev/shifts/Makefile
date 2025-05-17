@@ -1,9 +1,9 @@
 CC_ADD = -g
 BUILDBINS = test
-OBJ_test = gen-shift.o
+OBJ_test = test-shift.o
 
 .MAIN: $(BUILDBINS)
 
-gen-shift.o: gen-shift.c ../../gen-code/shifts.c
+test-shift.o: test-shift.c ../../gen-code/shifts.c
 
 .include <local-prog>

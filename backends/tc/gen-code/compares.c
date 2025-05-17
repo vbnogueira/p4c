@@ -1,6 +1,6 @@
 /*
  * This code is here in a separate file so it can be shared between p4c
- *  and gen-compare.c (if-and-when we have a gen-compare.c, that is).
+ *  and test-compare.c (if-and-when we have a test-compare.c, that is).
  *
  * This code requires, from its surrounding code:
  *

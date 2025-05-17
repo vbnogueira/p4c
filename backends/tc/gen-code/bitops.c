@@ -1,6 +1,6 @@
 /*
  * This code is here in a separate file so it can be shared between p4c
- *  and gen-arith.c (if-and-when we have a gen-arith.c, that is).
+ *  and test-arith.c (if-and-when we have a test-arith.c, that is).
  *
  * This code requires, from its surrounding code:
  *

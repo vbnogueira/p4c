@@ -1,6 +1,6 @@
 /*
  * This code is here in a separate file so it can be shared between p4c
- *  and gen-shift.c.
+ *  and test-shift.c.
  *
  * This code requires, from its surrounding code:
  *
