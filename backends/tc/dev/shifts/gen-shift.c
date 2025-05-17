@@ -1,5 +1,5 @@
 /*
- * Shift-code generation algorithm test program.
+ * Shift code generation algorithm test program.
  *
  * This is designed to test the shift implementation generation.  There
  *  are six kinds of shifts of interest:
@@ -17,7 +17,7 @@
  *  run-time value" forms, this is the number of bits in that run-time
  *  value.
  *
- * In case case, this program runs the shift-code generation code.  It
+ * In each case, this program runs the shift-code generation code.  It
  *  also generates a test program surrounding it.  The test program
  *  runs a bunch of random test cases (the count of them comes from the
  *  TESTCASES #define, below).  For each test case, randomly-generated
@@ -50,18 +50,23 @@
  * The shifter code generation is slightly odd; it uses a type,
  *  BUILDER, which looks unnecessary.  And it _is_ unnecessary, from
  *  one point of view.  This is done so that the shift generation code
- *  is textually very similar to the similar code in the P4 transpiler;
- *  the less needs to be done to the generation code when moving it
- *  between the tester and the P4 transpiler, the more confidence I
- *  have that the result will bep correct.  This is also why, for
- *  example, this program writes bld->newline() instead of the
- *  (*bld->newline)() I would normally use in C: it is trying to look
- *  like the C++ code in the P4 transpiler.  Similarly to the P4
- *  transpiler is also why the WIDTH_REC type exists here.  With these
- *  done, moving the shift generation code into the P4 transpiler needs
- *  only changing BUILDER to EBPF::CodeBuilder.  (This could even be
- *  done with a #define, in which case _no_ textual changes are
- *  needed.)
+ *  can be textually identical to the similar code in the P4
+ *  transpiler; the less needs to be done to the generation code when
+ *  moving it between the tester and the P4 transpiler, the more
+ *  confidence I have that the result will bep correct.  We use a few
+ *  macros so that they can be identical, and, indeed, the P4C TC
+ *  backend and this program #include the same file to get the
+ *  generation code.  This is also why, for example, this program
+ *  writes bld->newline() instead of the (*bld->newline)() I would
+ *  normally use in C: it is trying to look like the C++ code in the P4
+ *  transpiler.  Similarly to the P4 transpiler is also why the
+ *  WIDTH_REC type exists here.
+ *
+ * The test programs also bracket the value bytes with guard bytes, to
+ *  make it easier to catch implementations that incorrectly access
+ *  bytes before or after the value bytes.  Again, macros are used to
+ *  make the implementations textually identical to the P4
+ *  transpiler's, which don't use guard bytes.
  *
  * This program can be run with no arguments, in which case it behaves
  *  as described above.  It can also take three arguments, which are a
