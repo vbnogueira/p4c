@@ -4,7 +4,7 @@ typedef unsigned int u32;
 typedef unsigned long long int u64;
 
 #define GUARDSIZE 8
-#define BITS(v) (&v.bits_[GUARDSIZE])
+#define BITS(v) (&(v).bits_[GUARDSIZE])
 
 struct internal_bit_65 {
   u8 bits_[9+(2*GUARDSIZE)];

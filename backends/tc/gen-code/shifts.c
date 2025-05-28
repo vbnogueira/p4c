@@ -10,14 +10,53 @@
  *
  * The generated code similarly requires:
  *
+ *	- INIT must expand to any needed initializer for a struct
+ *		internal_bit_*.  (This must include the =, when
+ *		applicable.)  This may or may not initialize the guard
+ *		bits, if present; SETGUARDS() will be called for that.
+ *
  *	- BITS(x) takes a struct internal_bit_* and returns a pointer
  *		to the first of its data bytes.
  *
- *	- ADDGUARDS(x,y) takes two structs internal_bit_* and returns
- *		another one, whose data is equal to x but with the
- *		guard bytes, when present, copied from y.  (If there
- *		are no guard bytes, it can return x and ignore y.)
+ *	- CONSTGUARDS(t,f) assumes t is a value which was constructed
+ *		with array initialization providing the value (and thus
+ *		has the actual value starting at the beginning of the
+ *		array, with no guard bytes).  This value is moved into
+ *		the correct position and f's guard bytes are copied to
+ *		provide guard bytes.  The resulting value is returned.
+ *		If there are no guard bytes, this typically will expand
+ *		to its first argument unchanged.
+ *
+ *	- COPYGUARDS(t,f) returns t, but with the guard bits copied
+ *		from f.  (To put it another way, this is just like
+ *		CONSTGUARDS(t,f) except that t's value bits are already
+ *		in the correct place.)
+ *
+ *	- GUARDARGS expands to declarations of any trailing arguments
+ *		needed by SETGUARDS (below).
+ *
+ *	- SETGUARDS(x) generates code to set random guard bytes on x,
+ *		copying the guard bytes also to the arguments declared
+ *		by GUARDARGS.  If there are no guard bytes, this
+ *		typically will be an empty do-while.
  */
+
+/*
+ * Can this even happen?  Shifting by a zero constant is the kind of
+ *  thing I'd expect to get optimized away in an MI way.  But it's easy
+ *  to DTRT here....
+ */
+static void zero_shift_constant(BUILDER *bld, unsigned int w)
+{
+ bld->append("#if GUARDSIZE > 0\n");
+ bld->appendFormat(" struct internal_bit_%u rv INIT;\n",w);
+ bld->append(" rv = v;\n");
+ bld->append(" SETGUARDS(rv);\n");
+ bld->append(" return(rv);\n");
+ bld->append("#else\n");
+ bld->append(" return(v);\n");
+ bld->append("#endif\n");
+}
 
 static void gen_shl_c(BUILDER *bld, const WIDTH_REC *wr)
 {
@@ -34,15 +73,10 @@ static void gen_shl_c(BUILDER *bld, const WIDTH_REC *wr)
  sv = wr->shift_c.sv;
  assert((lw > 64) && (sv < lw));
  bld->newline();
- bld->appendFormat("struct internal_bit_%u shl_%u_c_%u(struct internal_bit_%u v)\n",lw,lw,sv,lw);
+ bld->appendFormat("struct internal_bit_%u shl_%u_c_%u(struct internal_bit_%u v GUARDARGS)\n",lw,lw,sv,lw);
  bld->append("{\n"/*}*/);
  if (sv == 0)
-  { /*
-     * Can this even happen?  Shifting by a zero constant is the kind
-     *	of thing I'd expect to get optimized away in an MI way.  But
-     *	it's easy to DTRT here....
-     */
-    bld->append(" return(v);\n");
+  { zero_shift_constant(bld,lw);
   }
  else
   { bld->appendFormat(" struct internal_bit_%u rv INIT;\n",lw);
@@ -50,6 +84,7 @@ static void gen_shl_c(BUILDER *bld, const WIDTH_REC *wr)
     sv &= 7;
     if (sv) bld->append(" u16 a;\n");
     bld->newline();
+    bld->append(" SETGUARDS(rv);\n");
     if (o) bld->appendFormat(" __builtin_memset(&BITS(rv)[%u],0,%u);\n",((lw+7)>>3)-o,o);
     if (sv)
      { pref = "";
@@ -104,21 +139,18 @@ static void gen_shrl_c(BUILDER *bld, const WIDTH_REC *wr)
  append_type_for_width(bld,lw);
  bld->appendFormat(" shrl_%u_c_%u(",lw,sv);
  append_type_for_width(bld,lw);
- bld->append(" v)\n");
+ bld->append(" v GUARDARGS)\n");
  bld->append("{\n"/*}*/);
  if (sv == 0)
-  { /*
-     * Can this even happen?  Shifting by a zero constant is the kind
-     *	of thing I'd expect to get optimized away in an MI way.  But
-     *	it's easy to DTRT here....
-     */
-    bld->append(" return(v);\n");
+  { zero_shift_constant(bld,lw);
   }
  else
   { bld->appendFormat(" struct internal_bit_%u rv INIT;\n",lw);
+    if ((sv < (lw & ~7U)) && (sv & 7)) bld->append(" u32 a;\n");
+    bld->newline();
+    bld->append(" SETGUARDS(rv);\n");
     if (sv >= (lw & ~7U))
      { // No bits survive from anything below the top byte of v
-       bld->newline();
        bld->appendFormat(" __builtin_memset(&BITS(rv)[0],0,%u);\n",(lw-1)>>3);
        if (sv == (lw & ~7U))
 	{ bld->appendFormat(" BITS(rv)[%u] = BITS(v)[0]",(lw-1)>>3);
@@ -133,8 +165,7 @@ static void gen_shrl_c(BUILDER *bld, const WIDTH_REC *wr)
 	}
      }
     else if (! (sv & 7))
-     { bld->newline();
-       if (lw & 7)
+     { if (lw & 7)
 	{ bld->appendFormat(" __builtin_memcpy(&BITS(rv)[%u],&BITS(v)[1],%u);\n",(sv>>3)+1,(lw-sv)>>3);
 	  bld->appendFormat(" BITS(rv)[%u] = BITS(v)[0] & %u;\n",sv>>3,(1U<<(lw&7))-1U);
 	  bld->appendFormat(" __builtin_memset(&BITS(rv)[0],0,%u);\n",sv>>3);
@@ -145,9 +176,7 @@ static void gen_shrl_c(BUILDER *bld, const WIDTH_REC *wr)
 	}
      }
     else
-     { bld->append(" u32 a;\n");
-       bld->newline();
-       bld->append(" a = BITS(v)[0]");
+     { bld->append(" a = BITS(v)[0]");
        if (lw & 7) bld->appendFormat(" & %u",(1U<<(lw&7))-1);
        bld->append(";\n");
        s = 8 + ((lw - 1) & 7) - ((lw - 1 - sv) & 7);
@@ -192,21 +221,18 @@ static void gen_shra_c(BUILDER *bld, const WIDTH_REC *wr)
  append_type_for_width(bld,lw);
  bld->appendFormat(" shra_%u_c_%u(",lw,sv);
  append_type_for_width(bld,lw);
- bld->append(" v)\n");
+ bld->append(" v GUARDARGS)\n");
  bld->append("{\n"/*}*/);
  if (sv == 0)
-  { /*
-     * Can this even happen?  Shifting by a zero constant is the kind
-     *	of thing I'd expect to get optimized away in an MI way.  But
-     *	it's easy to DTRT here....
-     */
-    bld->append(" return(v);\n");
+  { zero_shift_constant(bld,lw);
   }
  else
   { bld->appendFormat(" struct internal_bit_%u rv INIT;\n",lw);
+    if ((sv < (lw & ~7U)) && (sv & 7)) bld->append(" u32 a;\n");
+    bld->newline();
+    bld->append(" SETGUARDS(rv);\n");
     if (sv >= (lw & ~7U))
      { // No bits survive from anything below the top byte of v
-       bld->newline();
        if (sv == lw-1)
 	{ // All bits copies of sign bit
 	  if (lw & 7)
@@ -245,8 +271,7 @@ static void gen_shra_c(BUILDER *bld, const WIDTH_REC *wr)
 	}
      }
     else if (! (sv & 7))
-     { bld->newline();
-       if (lw & 7)
+     { if (lw & 7)
 	{ bld->appendFormat(" __builtin_memcpy(&BITS(rv)[%u],&BITS(v)[0],%u);\n",sv>>3,(lw+8-sv)>>3);
 	  bld->appendFormat(" BITS(rv)[%u] |= (BITS(v)[0] & %u) ? %u : 0;\n",(lw>>3)-((lw-sv)>>3),1U<<((lw-1)&7),(255U<<(lw&7))&255U);
 	  if ((sv >> 3) > 1) bld->appendFormat(" __builtin_memset(&BITS(rv)[1],(BITS(v)[0]&%u)?255:0,%u);\n",1U<<((lw-1)&7),(sv>>3)-1);
@@ -258,9 +283,7 @@ static void gen_shra_c(BUILDER *bld, const WIDTH_REC *wr)
 	}
      }
     else
-     { bld->append(" u32 a;\n");
-       bld->newline();
-       switch (lw & 7)
+     { switch (lw & 7)
 	{ case 0:
 	     bld->append(" a = BITS(v)[0] | ((BITS(v)[0] & 128) ? ~(u32)255 : 0);\n");
 	     break;
@@ -370,7 +393,7 @@ static void gen_shl_x(BUILDER *bld, const WIDTH_REC *wr)
  append_type_for_width(bld,lw);
  bld->append(" v, ");
  append_type_for_width(bld,rw);
- bld->append(" sh)\n");
+ bld->append(" sh GUARDARGS)\n");
  bld->append("{\n"/*}*/);
  if (rw > 64) bld->append(" unsigned int s;\n");
  if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv INIT;\n",lw);
@@ -379,6 +402,7 @@ static void gen_shl_x(BUILDER *bld, const WIDTH_REC *wr)
  bld->append(" unsigned int left;\n");
  bld->append(" unsigned int o;\n");
  bld->newline();
+ bld->append(" SETGUARDS(rv);\n");
  gen_sh_x_shvar(bld,lw,rw,"sh","s",&shvar);
  // the value in the variable named by shvar is < lw, now
  // (but we can't assert() that; it's a packet-processing-time thing)
@@ -389,7 +413,8 @@ static void gen_shl_x(BUILDER *bld, const WIDTH_REC *wr)
   { bld->appendFormat("    return(v<<%s);\n",shvar);
   }
  else
-  { if (rw > 3)
+  { bld->appendFormat("    if (%s == 0) return(COPYGUARDS(v,rv));\n",shvar);
+    if (rw > 3)
      { bld->appendFormat("    for (o=%u,left=%u;%s>=8;o--,%s-=8,left-=8) BITS(rv)[o] = 0;\n",(lw-1)>>3,lw,shvar,shvar);
        bld->append      ("    a = 0;\n");
        bld->appendFormat("    for (i=%u;left>=8;left-=8)\n",(lw-1)>>3);
@@ -413,7 +438,7 @@ static void gen_shl_x(BUILDER *bld, const WIDTH_REC *wr)
   { bld->append("0");
   }
  else
-  { bld->appendFormat("(struct internal_bit_%u){{0}}",lw);
+  { bld->appendFormat("CONSTGUARDS((struct internal_bit_%u){{0}},rv)",lw);
   }
  bld->append(");\n");
  bld->append(/*{*/"}\n");
@@ -435,7 +460,7 @@ static void gen_shrl_x(BUILDER *bld, const WIDTH_REC *wr)
  append_type_for_width(bld,lw);
  bld->append(" v, ");
  append_type_for_width(bld,rw);
- bld->append(" sh)\n");
+ bld->append(" sh GUARDARGS)\n");
  bld->append("{\n"/*}*/);
  if (rw > 64) bld->append(" unsigned int s;\n");
  if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv INIT;\n",lw);
@@ -443,6 +468,7 @@ static void gen_shrl_x(BUILDER *bld, const WIDTH_REC *wr)
  bld->append(" int i;\n");
  bld->append(" int o;\n");
  bld->newline();
+ bld->append(" SETGUARDS(rv);\n");
  gen_sh_x_shvar(bld,lw,rw,"sh","s",&shvar);
  // the value in the variable named by shvar is < lw, now
  // (but we can't assert() that; it's a packet-processing-time thing)
@@ -450,7 +476,8 @@ static void gen_shrl_x(BUILDER *bld, const WIDTH_REC *wr)
   { bld->appendFormat("    return(v>>%s);\n",shvar);
   }
  else
-  { bld->appendFormat("    i = %u - (%s >> 3);\n",(lw-1)>>3,shvar);
+  { bld->appendFormat("    if (%s == 0) return(COPYGUARDS(v,rv));\n",shvar);
+    bld->appendFormat("    i = %u - (%s >> 3);\n",(lw-1)>>3,shvar);
     bld->appendFormat("    %s = 8 - (%s & 7ULL);\n",shvar,shvar);
     bld->appendFormat("    a = BITS(v)[i--] << %s;\n",shvar);
     bld->appendFormat("    o = %u;\n",(lw-1)>>3);
@@ -469,7 +496,7 @@ static void gen_shrl_x(BUILDER *bld, const WIDTH_REC *wr)
   { bld->append("0");
   }
  else
-  { bld->appendFormat("(struct internal_bit_%u){{0}}",lw);
+  { bld->appendFormat("CONSTGUARDS((struct internal_bit_%u){{0}},rv)",lw);
   }
  bld->append(");\n");
  bld->append(/*{*/"}\n");
@@ -492,7 +519,7 @@ static void gen_shra_x(BUILDER *bld, const WIDTH_REC *wr)
  append_type_for_width(bld,lw);
  bld->append(" v, ");
  append_type_for_width(bld,rw);
- bld->append(" sh)\n");
+ bld->append(" sh GUARDARGS)\n");
  bld->append("{\n"/*}*/);
  if (rw > 64) bld->append(" unsigned int s;\n");
  if (lw > 64) bld->appendFormat(" struct internal_bit_%u rv INIT;\n",lw);
@@ -501,6 +528,7 @@ static void gen_shra_x(BUILDER *bld, const WIDTH_REC *wr)
  bld->append(" int o;\n");
  bld->append(" u8 sign;\n");
  bld->newline();
+ bld->append(" SETGUARDS(rv);\n");
  gen_sh_x_shvar(bld,lw,rw,"sh","s",&shvar);
  // the value in the variable named by shvar is < lw, now
  // (but we can't assert() that; it's a packet-processing-time thing)
@@ -508,7 +536,7 @@ static void gen_shra_x(BUILDER *bld, const WIDTH_REC *wr)
   { bld->appendFormat("    return((v>>%s)|((v&%lluULL)?(((1ULL<<%s)-1ULL)<<(%u-%s)):0));\n",shvar,1ULL<<(lw-1),shvar,lw,shvar);
   }
  else
-  { bld->appendFormat("    if (! %s) return(v);\n",shvar);
+  { bld->appendFormat("    if (! %s) return(COPYGUARDS(v,rv));\n",shvar);
     bld->appendFormat("    sign = (BITS(v)[0] & %u) ? 255 : 0;\n",1U<<((lw-1)&7));
     bld->appendFormat("    i = %s >> 3;\n",shvar);
     bld->appendFormat("    %s = 8 - (%s & 7ULL);\n",shvar,shvar);
@@ -558,11 +586,11 @@ static void gen_shra_x(BUILDER *bld, const WIDTH_REC *wr)
   { bld->appendFormat("(v&%lluULL)?%lluULL:0",1ULL<<(lw-1),((1ULL<<(lw-1))<<1)|1ULL);
   }
  else
-  { bld->appendFormat("ADDGUARDS(((BITS(v)[0]&%u)?(struct internal_bit_%u){{"/*}}*/,1U<<((lw-1)&7),lw);
+  { bld->appendFormat("CONSTGUARDS(((BITS(v)[0]&%u)?(struct internal_bit_%u){{"/*}}*/,1U<<((lw-1)&7),lw);
     bld->appendFormat("%u",(1U<<(((lw-1)&7)+1))-1);
     for (i=(lw-1)>>3;i>0;i--) bld->append(",255");
     bld->appendFormat(/*{{*/"}}:(struct internal_bit_%u){{0}}",lw);
-    bld->append("),v)");
+    bld->append("),rv)");
   }
  bld->append(");\n");
  bld->append(/*{*/"}\n");

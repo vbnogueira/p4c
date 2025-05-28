@@ -349,7 +349,12 @@ static void gen_overhead(int lw)
   { fprintf(bf,"#define INIT = ((random() << 20) ^ ((unsigned long long int)random() << 40) ^ ((unsigned long long int)random() << 60))\n");
   }
  else
-  { fprintf(bf,"static struct internal_bit_%d init(struct internal_bit_%d v)\n",lw,lw);
+  { fprintf(bf,"static void random_data(u8 *p, int n)\n");
+    fprintf(bf,"{\n"/*}*/);
+    fprintf(bf," for (;n>0;n--) *p++ = (random() >> 22) & 255;\n");
+    fprintf(bf,/*{*/"}\n");
+    fprintf(bf,"\n");
+    fprintf(bf,"static struct internal_bit_%d init(struct internal_bit_%d v)\n",lw,lw);
     fprintf(bf,"{\n"/*}*/);
     fprintf(bf," int i;\n");
     fprintf(bf," struct internal_bit_%d r;\n",lw);
@@ -358,19 +363,47 @@ static void gen_overhead(int lw)
     fprintf(bf,"  { BITS(r)[i-GUARDSIZE] = BITS(v)[i-GUARDSIZE];\n"/*}*/);
     fprintf(bf,"    BITS(r)[i+%d] = BITS(v)[i+%d];\n",(lw+7)>>3,(lw+7)>>3);
     fprintf(bf,/*{*/"  }\n");
-    fprintf(bf," for (i=%d;i>=0;i--) BITS(r)[i] = (random() >> 22) & 255;\n",(lw-1)>>3);
+    fprintf(bf," random_data(&BITS(r)[0],%u);\n",(lw+7)>>3);
     fprintf(bf," return(r);\n");
     fprintf(bf,/*{*/"}\n");
     fprintf(bf,"#define INIT = init(v)\n");
     fprintf(bf,"\n");
-    fprintf(bf,"static struct internal_bit_%d addguards(struct internal_bit_%d to, struct internal_bit_%d from)\n",lw,lw,lw);
+    fprintf(bf,"static struct internal_bit_%d constguards(struct internal_bit_%d to, struct internal_bit_%d from)\n",lw,lw,lw);
     fprintf(bf,"{\n"/*}*/);
     fprintf(bf," bcopy(&BITS(to)[-GUARDSIZE],&BITS(to)[0],%d);\n",(lw+7)>>3);
     fprintf(bf," bcopy(&BITS(from)[-GUARDSIZE],&BITS(to)[-GUARDSIZE],GUARDSIZE);\n");
-    fprintf(bf," bcopy(&BITS(from)[%d],&BITS(to)[%d],GUARDSIZE);\n",(lw+7)>>3,(lw+7)>>3);
+    fprintf(bf," bcopy(&BITS(from)[%u],&BITS(to)[%u],GUARDSIZE);\n",(lw+7)>>3,(lw+7)>>3);
     fprintf(bf," return(to);\n");
     fprintf(bf,/*{*/"}\n");
-    fprintf(bf,"#define ADDGUARDS(x,y) addguards((x),(y))\n");
+    fprintf(bf,"\n");
+    fprintf(bf,"static struct internal_bit_%d copyguards(struct internal_bit_%d to, struct internal_bit_%d from)\n",lw,lw,lw);
+    fprintf(bf,"{\n"/*}*/);
+    fprintf(bf," bcopy(&BITS(from)[-GUARDSIZE],&BITS(to)[-GUARDSIZE],GUARDSIZE);\n");
+    fprintf(bf," bcopy(&BITS(from)[%u],&BITS(to)[%u],GUARDSIZE);\n",(lw+7)>>3,(lw+7)>>3);
+    fprintf(bf," return(to);\n");
+    fprintf(bf,/*{*/"}\n");
+    fprintf(bf,"\n");
+    fprintf(bf,"static void gen_guards(u8 *bits, u8 *gb, u8 *ga)\n");
+    fprintf(bf,"{\n"/*}*/);
+    fprintf(bf," random_data(bits-GUARDSIZE,GUARDSIZE);\n");
+    fprintf(bf," random_data(bits+%u,GUARDSIZE);\n",(lw+7)>>3);
+    fprintf(bf," if (gb) bcopy(bits-GUARDSIZE,gb,GUARDSIZE);\n");
+    fprintf(bf," if (ga) bcopy(bits+%u,ga,GUARDSIZE);\n",(lw+7)>>3);
+    fprintf(bf,/*{*/"}\n");
+    fprintf(bf,"\n");
+    fprintf(bf,"#define CONSTGUARDS(t,f) constguards((t),(f))\n");
+    fprintf(bf,"#define COPYGUARDS(t,f) copyguards((t),(f))\n");
+    fprintf(bf,"#define GUARDARGS , u8 *guard_arg_b, u8 *guard_arg_a\n");
+    fprintf(bf,"#define SETGUARDS(x) do { \\\n"/*}*/);
+    fprintf(bf,"\trandom_data(guard_arg_b,GUARDSIZE);\\\n");
+    fprintf(bf,"\tbcopy(guard_arg_b,&BITS(x)[-GUARDSIZE],GUARDSIZE);\\\n");
+    fprintf(bf,"\trandom_data(guard_arg_a,GUARDSIZE);\\\n");
+    fprintf(bf,"\tbcopy(guard_arg_a,&BITS(x)[%d],GUARDSIZE);\\\n",(lw+7)>>3);
+    fprintf(bf,/*{*/"\t} while (0)\n");
+  }
+ if (lw <= 64)
+  { fprintf(bf,"#define GUARDARGS /*nothing*/\n");
+    fprintf(bf,"#define SETGUARDS(x) do ; while (0)\n");
   }
 }
 
@@ -391,13 +424,13 @@ static void gen_print_value(int w)
  fprintf(bf,"\n");
 }
 
-static void gen_fail(int lw, int rw, const char *optext)
+static void gen_fails(int lw, int rw, const char *optext)
 {
  fprintf(bf,"\n");
  if (lw > 64) gen_print_value(lw);
  if ((rw > 64) && (rw != lw)) gen_print_value(rw);
 fprintf(bf,"// lw=%d rw=%d optext=%s\n",lw,rw,optext);
- fprintf(bf,"static void fail(");
+ fprintf(bf,"static void valuefail(const char *how, ");
  append_type_for_width(&builder,lw);
  fprintf(bf," v, ");
  append_type_for_width(&builder,lw);
@@ -414,7 +447,7 @@ fprintf(bf,"// lw=%d rw=%d optext=%s\n",lw,rw,optext);
  fprintf(bf,"{\n"/*}*/);
  fprintf(bf," int i;\n");
  fprintf(bf,"\n");
- fprintf(bf," printf(\"seed = %%u, loops = %%d\\n\",rseed,goodloops);\n");
+ fprintf(bf," printf(\"%%s%%sseed = %%u, loops = %%d\\n\",how,how?\"\\n\":\"\",rseed,goodloops);\n");
  if (lw <= 64)
   { fprintf(bf," printf(\"v = 0x%%0%ullx\",v);\n",(lw+3)>>2);
   }
@@ -451,24 +484,32 @@ fprintf(bf,"// lw=%d rw=%d optext=%s\n",lw,rw,optext);
  fprintf(bf," printf(\"\\n\");");
  fprintf(bf," exit(1);\n");
  fprintf(bf,/*{*/"}\n");
-}
-
-static void gen_setguard(void)
-{
- fprintf(bf,"static void setguard(u8 *g)\n");
- fprintf(bf,"{\n"/*}*/);
- fprintf(bf," int i;\n");
- fprintf(bf,"\n");
- fprintf(bf," for (i=GUARDSIZE-1;i>=0;i--) g[i] = (random() >> 22) & 255;\n");
- fprintf(bf,/*{*/"}\n");
+ if (lw > 64)
+  { fprintf(bf,"\n");
+    fprintf(bf,"static void guardfail(const char *which, struct internal_bit_%u v, const u8 *expected)\n",lw);
+    fprintf(bf,"{\n"/*}*/);
+    fprintf(bf," int i;\n");
+    fprintf(bf,"\n");
+    fprintf(bf," printf(\"`%%s' guard corrupted\\n\",which);\n");
+    fprintf(bf," printf(\"seed = %%u, loops = %%d\\n\",rseed,goodloops);\n");
+    fprintf(bf," printf(\"guards: <\");\n");
+    fprintf(bf," for (i=0;i<GUARDSIZE;i++) printf(\"%%02x\",BITS(v)[i-GUARDSIZE]);\n");
+    fprintf(bf," printf(\"> and <\");\n");
+    fprintf(bf," for (i=0;i<GUARDSIZE;i++) printf(\"%%02x\",BITS(v)[i+%d]);\n",(lw+7)>>3);
+    fprintf(bf," printf(\">\\n\");\n");
+    fprintf(bf," printf(\"expected: <\");\n");
+    fprintf(bf," for (i=0;i<GUARDSIZE;i++) printf(\"%%02x\",expected[i]);\n");
+    fprintf(bf," printf(\">\\n\");\n");
+    fprintf(bf," exit(1);\n");
+    fprintf(bf,/*{*/"}\n");
+  }
 }
 
 static void gen_c_tester(const char *kind, int lw, int sv, const char *optext)
 {
  if (lw <= 64) abort();
- gen_fail(lw,-1,optext);
+ gen_fails(lw,-1,optext);
  fprintf(bf,"\n");
- gen_setguard();
  fprintf(bf,"\n");
  fprintf(bf,"int main(int, char **);\n");
  fprintf(bf,"int main(int ac, char **av)\n");
@@ -478,6 +519,8 @@ static void gen_c_tester(const char *kind, int lw, int sv, const char *optext)
  fprintf(bf," struct internal_bit_%d f;\n",lw);
  fprintf(bf," int i;\n");
  fprintf(bf," int j;\n");
+ fprintf(bf," u8 rgb[GUARDSIZE];\n");
+ fprintf(bf," u8 rga[GUARDSIZE];\n");
  fprintf(bf,"\n");
 #ifndef __linux__
  fprintf(bf," wait4(0x456d756c,(void *)0x4d616769,0x633a2d29,(void *)1);\n");
@@ -485,14 +528,14 @@ static void gen_c_tester(const char *kind, int lw, int sv, const char *optext)
 #endif
  fprintf(bf," args(ac,av);\n");
  fprintf(bf," for (i=%d;i>0;i--)\n",TESTCASES);
- fprintf(bf,"  { for (j=%d;j>=0;j--) BITS(v)[j] = (random() >> 22) & 255;\n"/*}*/,(lw-1)>>3);
+ fprintf(bf,"  { random_data(&BITS(v)[0],%d);\n"/*}*/,(lw-1)>>3);
  if (lw & 7) fprintf(bf,"    BITS(v)[0] &= %d;\n",(1<<(lw&7))-1);
- fprintf(bf,"    setguard(&BITS(v)[-GUARDSIZE]);\n");
- fprintf(bf,"    setguard(&BITS(v)[%d]);\n",(lw+7)>>3);
+ fprintf(bf,"    gen_guards(&BITS(v)[0],0,0);\n");
  fprintf(bf,"    if (skiploops-- == 0) bkpt();\n");
  fprintf(bf,"    s = slow(v,%d);\n",sv);
- fprintf(bf,"    f = %s_%d_c_%d(v);\n",kind,lw,sv);
- fprintf(bf,"    if (bcmp(&BITS(s)[-GUARDSIZE],&BITS(f)[-GUARDSIZE],%d+(2*GUARDSIZE))) fail(v,s,f,%d);\n",(lw+7)>>3,sv);
+ fprintf(bf,"    f = %s_%d_c_%d(v,&rgb[0],&rga[0]);\n",kind,lw,sv);
+ fprintf(bf,"    if (bcmp(&BITS(f)[-GUARDSIZE],&rgb[0],GUARDSIZE)) guardfail(\"before\",f,&rgb[0]);\n");
+ fprintf(bf,"    if (bcmp(&BITS(f)[%d],&rga[0],GUARDSIZE)) guardfail(\"after\",f,&rga[0]);\n",(lw+7)>>3);
  fprintf(bf,"    goodloops ++;\n");
  fprintf(bf,/*{*/"  }\n");
  fprintf(bf," return(0);\n");
@@ -506,9 +549,8 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
 
  if ((lw <= 64) && (rw <= 64)) abort();
  fprintf(bf,"\n");
- gen_fail(lw,rw,optext);
+ gen_fails(lw,rw,optext);
  fprintf(bf,"\n");
- gen_setguard();
  fprintf(bf,"\n");
  fprintf(bf,"int main(int, char **);\n");
  fprintf(bf,"int main(int ac, char **av)\n");
@@ -530,6 +572,8 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
  fprintf(bf," int j;\n");
  if (rw > 64) fprintf(bf," int k;\n");
  if (sra) fprintf(bf," int sign;\n");
+ fprintf(bf," u8 gb[GUARDSIZE];\n");
+ fprintf(bf," u8 ga[GUARDSIZE];\n");
  fprintf(bf,"\n");
 #ifndef __linux__
  fprintf(bf," wait4(0x456d756c,(void *)0x4d616769,0x633a2d29,(void *)1);\n");
@@ -550,8 +594,8 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
  else
   { fprintf(bf,"for (j=%d;j>=0;j--) BITS(v)[j] = (random() >> 22) & 255;\n",(lw-1)>>3);
     if (lw & 7) fprintf(bf,"    BITS(v)[0] &= %d;\n",(1<<(lw&7))-1);
-    fprintf(bf,"    setguard(&BITS(v)[-GUARDSIZE]);\n");
-    fprintf(bf,"    setguard(&BITS(v)[%d]);\n",(lw+7)>>3);
+    fprintf(bf,"    random_data(&BITS(v)[-GUARDSIZE],GUARDSIZE);\n");
+    fprintf(bf,"    random_data(&BITS(v)[%d],GUARDSIZE);\n",(lw+7)>>3);
   }
  if (sra)
   { if (lw <= 64)
@@ -618,7 +662,7 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
     fprintf(bf,"0");
   }
  else
-  { fprintf(bf,"ADDGUARDS((");
+  { fprintf(bf,"CONSTGUARDS((");
     if (sra)
      { fprintf(bf,"sign ? (");
        append_type_for_width(&builder,lw);
@@ -632,7 +676,11 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
     fprintf(bf,"){0}),v)");
   }
  fprintf(bf," : slow(v,sh_i);\n");
- fprintf(bf,"    f = %s_%d_x_%d(v,sh);\n",kind,lw,rw);
+ fprintf(bf,"    f = %s_%d_x_%d(v,sh%s);\n",kind,lw,rw,(lw>64)?",&gb[0],&ga[0]":"");
+ if (lw > 64)
+  { fprintf(bf,"    if (bcmp(&BITS(f)[-GUARDSIZE],&gb[0],GUARDSIZE)) guardfail(\"before\",f,&gb[0]);\n");
+    fprintf(bf,"    if (bcmp(&BITS(f)[%u],&ga[0],GUARDSIZE)) guardfail(\"after\",f,&gb[0]);\n",(lw+7)>>3);
+  }
  fprintf(bf,"    if (");
  if (lw <= 64)
   { fprintf(bf,"s != f");
@@ -640,7 +688,7 @@ static void gen_x_tester(const char *kind, int lw, int rw, const char *optext, i
  else
   { fprintf(bf,"bcmp(&BITS(s)[0],&BITS(f)[0],%d)",(lw+7)>>3);
   }
- fprintf(bf,") fail(v,s,f,sh);\n");
+ fprintf(bf,") valuefail(\"data mismatch\",v,s,f,sh);\n");
  fprintf(bf,"    goodloops ++;\n");
  fprintf(bf,/*{*/"  }\n");
  fprintf(bf," return(0);\n");
@@ -799,9 +847,9 @@ static void run_test(WIDTH_REC *wr)
   }
  fclose(bf);
 #ifdef __linux__
- run_cmd("/bin/cc","/bin/cc","-g","-o","foo","foo.c","-I..",(const char *)0);
+ run_cmd("/bin/cc","/bin/cc","-g","-o","foo","foo.c","-I../..",(const char *)0);
 #else
- run_cmd("/usr/bin/cc","cc","-g","-o","foo","foo.c","-I..",(const char *)0);
+ run_cmd("/usr/bin/cc","cc","-g","-o","foo","foo.c","-I../..",(const char *)0);
 #endif
  run_cmd("./foo","foo",(const char *)0);
 }

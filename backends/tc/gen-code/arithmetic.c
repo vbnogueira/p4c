@@ -16,30 +16,38 @@
  *	- COPYGUARDS(x,y) copies the guard bytes, if present, from y to
  *		x.  (If there are no guard bytes, this will typically
  *		be a macro which expands to an empty do-while.)
+ *
+ *	- GUARDARGS expands to declarations of any trailing arguments
+ *		needed by SETGUARDS (below).
+ *
+ *	- SETGUARDS(x) generates code to set random guard bytes on x,
+ *		copying the guard bytes also to the arguments declared
+ *		by GUARDARGS.  If there are no guard bytes, this
+ *		typically will be an empty do-while.
  */
 
 static void gen_add(BUILDER *bld, const WIDTH_REC *wr)
 {
  unsigned int w;
  unsigned int b;
- unsigned int i;
+ int i;
 
  assert(wr->type == WR_ADD);
  w = wr->arith.w;
  b = (w + 7) >> 3;
  bld->newline();
- bld->appendFormat("static __always_inline struct internal_bit_%u add_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
+ bld->appendFormat("static __always_inline struct internal_bit_%u add_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs GUARDARGS)\n",w,w,w,w);
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
  // really need only u9, but can't count on that existing, ugh
  // (for that matter, can count on u16 existing only pragmatically)
  bld->append(" u16 a;\n");
  bld->append("\n");
- bld->append(" COPYGUARDS(ret,lhs);\n");
- for (i=0;i<b;i++)
-  { bld->appendFormat(" a = BITS(lhs)[%u] + BITS(rhs)[%u]%s;\n",i,i,i?" + (a >> 8)":"");
-    bld->appendFormat(" BITS(ret)[%u] = a & ",i);
-    if (i+1 < b) bld->append("255"); else bld->appendFormat("%u",255>>((b*8)-w));
+ bld->append(" SETGUARDS(ret);\n");
+ for (i=b-1;i>=0;i--)
+  { bld->appendFormat(" a = BITS(lhs)[%d] + BITS(rhs)[%d]%s;\n",i,i,i?" + (a >> 8)":"");
+    bld->appendFormat(" BITS(ret)[%d] = a & ",i);
+    if (i > 0) bld->append("255"); else bld->appendFormat("%u",255>>((b*8)-w));
     bld->append(";\n");
   }
  bld->append(" return(ret);\n");
