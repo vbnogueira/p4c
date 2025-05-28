@@ -58,23 +58,24 @@ static void gen_sub(BUILDER *bld, const WIDTH_REC *wr)
 {
  unsigned int w;
  unsigned int b;
- unsigned int i;
+ int i;
 
  assert(wr->type == WR_SUB);
  w = wr->arith.w;
  b = (w + 7) >> 3;
  bld->newline();
- bld->appendFormat("static __always_inline struct internal_bit_%u sub_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
+ bld->appendFormat("static __always_inline struct internal_bit_%u sub_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs GUARDARGS)\n",w,w,w,w);
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
  // really need only u9, but can't count on that existing, ugh
  // (for that matter, can count on u16 existing only pragmatically)
  bld->append(" u16 a;\n");
  bld->append("\n");
- for (i=0;i<b;i++)
+ bld->append(" SETGUARDS(ret);\n");
+ for (i=b-1;i>=0;i--)
   { bld->appendFormat(" a = BITS(lhs)[%u] - BITS(rhs)[%u]%s;\n",i,i,i?" - ((a >> 8) & 1)":"");
     bld->appendFormat(" BITS(ret)[%u] = a & ",i);
-    if (i+1 < b) bld->append("255"); else bld->appendFormat("%u",255>>((b*8)-w));
+    if (i > 0) bld->append("255"); else bld->appendFormat("%u",255>>((b*8)-w));
     bld->append(";\n");
   }
  bld->append(" return(ret);\n");
