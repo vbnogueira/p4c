@@ -331,9 +331,57 @@ static void run_cmd(const char *exe, ...)
  free(av);
 }
 
-static void gen_twobig_fail(int w)
+static void gen_arg_data(int bits)
 {
- (void)w;
+ int bytes;
+
+ bytes = (bits + 7) >> 3;
+ fprintf(bf,"\n");
+ fprintf(bf,"static void arg_data(struct internal_bit_%d *v, const char *s0)\n",bits);
+ fprintf(bf,"{\n"/*}*/);
+ fprintf(bf," const char *s;\n");
+ fprintf(bf," unsigned int a;\n");
+ fprintf(bf," int i;\n");
+ fprintf(bf,"\n");
+ fprintf(bf," bzero(&BITS(*v)[0],%d);\n",bytes);
+ // Can't just use strto* - numbers (usually) are too big
+ fprintf(bf," s = s0;\n");
+ fprintf(bf," while (*s)\n");
+ fprintf(bf,"  { switch (*s)\n"/*}*/);
+ fprintf(bf,"     { case '0': a = 0 << 8; break;\n"/*}*/);
+ fprintf(bf,"       case '1': a = 1 << 8; break;\n");
+ fprintf(bf,"       case '2': a = 2 << 8; break;\n");
+ fprintf(bf,"       case '3': a = 3 << 8; break;\n");
+ fprintf(bf,"       case '4': a = 4 << 8; break;\n");
+ fprintf(bf,"       case '5': a = 5 << 8; break;\n");
+ fprintf(bf,"       case '6': a = 6 << 8; break;\n");
+ fprintf(bf,"       case '7': a = 7 << 8; break;\n");
+ fprintf(bf,"       case '8': a = 8 << 8; break;\n");
+ fprintf(bf,"       case '9': a = 9 << 8; break;\n");
+ fprintf(bf,"       case 'a': case 'A': a = 10 << 8; break;\n");
+ fprintf(bf,"       case 'b': case 'B': a = 11 << 8; break;\n");
+ fprintf(bf,"       case 'c': case 'C': a = 12 << 8; break;\n");
+ fprintf(bf,"       case 'd': case 'D': a = 13 << 8; break;\n");
+ fprintf(bf,"       case 'e': case 'E': a = 14 << 8; break;\n");
+ fprintf(bf,"       case 'f': case 'F': a = 15 << 8; break;\n");
+ fprintf(bf,"       default:\n");
+ fprintf(bf,"\t  fprintf(stderr,\"bad digit %%c in argument\\n\",*s);\n");
+ fprintf(bf,"\t  exit(1);\n");
+ fprintf(bf,"\t  break;\n");
+ fprintf(bf,/*{*/"     }\n");
+ fprintf(bf,"    for (i=%d;i>=0;i--)\n",bytes-1);
+ fprintf(bf,"     { a = (a >> 8) | BITS(*v)[i] << 4;\n"/*}*/);
+ fprintf(bf,"       BITS(*v)[i] = a & 255;\n");
+ fprintf(bf,/*{*/"     }\n");
+ fprintf(bf,"    s ++;\n");
+ fprintf(bf,/*{*/"  }\n");
+ fprintf(bf," if ((a > 255)");
+ if (bits & 7) fprintf(bf," || (BITS(*v)[0] & %d)",(255<<(bits&7))&255);
+ fprintf(bf,")\n");
+ fprintf(bf,"  { fprintf(stderr,\"%%s: argument `%%s' overflows %d bits\\n\",__progname,s0);\n"/*}*/,bits);
+ fprintf(bf,"    exit(1);\n");
+ fprintf(bf,/*{*/"  }\n");
+ fprintf(bf,/*{*/"}\n");
 }
 
 static void gen_twobig_tester(const char *optext, int bits)
@@ -401,52 +449,7 @@ static void gen_twobig_tester(const char *optext, int bits)
  fprintf(bf,/*{*/"  }\n");
  fprintf(bf," if (errs) exit(1);\n");
  fprintf(bf,/*{*/"}\n");
- fprintf(bf,"\n");
- fprintf(bf,"static void arg_data(struct internal_bit_%d *v, const char *s0)\n",bits);
- fprintf(bf,"{\n"/*}*/);
- fprintf(bf," const char *s;\n");
- fprintf(bf," unsigned int a;\n");
- fprintf(bf," int i;\n");
- fprintf(bf,"\n");
- fprintf(bf," bzero(&BITS(*v)[0],%d);\n",bytes);
- // Can't just use strto* - numbers (usually) are too big
- fprintf(bf," s = s0;\n");
- fprintf(bf," while (*s)\n");
- fprintf(bf,"  { switch (*s)\n"/*}*/);
- fprintf(bf,"     { case '0': a = 0 << 8; break;\n"/*}*/);
- fprintf(bf,"       case '1': a = 1 << 8; break;\n");
- fprintf(bf,"       case '2': a = 2 << 8; break;\n");
- fprintf(bf,"       case '3': a = 3 << 8; break;\n");
- fprintf(bf,"       case '4': a = 4 << 8; break;\n");
- fprintf(bf,"       case '5': a = 5 << 8; break;\n");
- fprintf(bf,"       case '6': a = 6 << 8; break;\n");
- fprintf(bf,"       case '7': a = 7 << 8; break;\n");
- fprintf(bf,"       case '8': a = 8 << 8; break;\n");
- fprintf(bf,"       case '9': a = 9 << 8; break;\n");
- fprintf(bf,"       case 'a': case 'A': a = 10 << 8; break;\n");
- fprintf(bf,"       case 'b': case 'B': a = 11 << 8; break;\n");
- fprintf(bf,"       case 'c': case 'C': a = 12 << 8; break;\n");
- fprintf(bf,"       case 'd': case 'D': a = 13 << 8; break;\n");
- fprintf(bf,"       case 'e': case 'E': a = 14 << 8; break;\n");
- fprintf(bf,"       case 'f': case 'F': a = 15 << 8; break;\n");
- fprintf(bf,"       default:\n");
- fprintf(bf,"\t  fprintf(stderr,\"bad digit %%c in argument\\n\",*s);\n");
- fprintf(bf,"\t  exit(1);\n");
- fprintf(bf,"\t  break;\n");
- fprintf(bf,/*{*/"     }\n");
- fprintf(bf,"    for (i=%d;i>=0;i--)\n",bytes-1);
- fprintf(bf,"     { a = (a >> 8) | BITS(*v)[i] << 4;\n"/*}*/);
- fprintf(bf,"       BITS(*v)[i] = a & 255;\n");
- fprintf(bf,/*{*/"     }\n");
- fprintf(bf,"    s ++;\n");
- fprintf(bf,/*{*/"  }\n");
- fprintf(bf," if ((a > 255)");
- if (bits & 7) fprintf(bf," || (BITS(*v)[0] & %d)",(255<<(bits&7))&255);
- fprintf(bf,")\n");
- fprintf(bf,"  { fprintf(stderr,\"%%s: argument `%%s' overflows %d bits\\n\",__progname,s0);\n"/*}*/,bits);
- fprintf(bf,"    exit(1);\n");
- fprintf(bf,/*{*/"  }\n");
- fprintf(bf,/*{*/"}\n");
+ gen_arg_data(bits);
  fprintf(bf,"\n");
  fprintf(bf,"int main(int, char **);\n");
  fprintf(bf,"int main(int ac, char **av)\n");
@@ -490,14 +493,98 @@ static void gen_twobig_tester(const char *optext, int bits)
  fprintf(bf,/*{*/"}\n");
 }
 
-static void gen_bxsmul_fail(int w, long long int sh)
+static void gen_bxsmul_tester(int bits, long long int smul)
 {
- (void)w; (void)sh;
-}
+ int bytes;
 
-static void gen_bxsmul_tester(const char *optext, int w, long long int sh)
-{
- (void)optext; (void)w; (void)sh;
+ assert(bits>64);
+ bytes = (bits + 7) >> 3;
+ fprintf(bf,"\n");
+ fprintf(bf,"static const char *num = 0;\n");
+ fprintf(bf,"unsigned int rseed = 0;\n");
+ fprintf(bf,"\n");
+ fprintf(bf,"static void handleargs(int ac, char **av)\n");
+ fprintf(bf,"{\n"/*}*/);
+ fprintf(bf," int skip;\n");
+ fprintf(bf," int errs;\n");
+ fprintf(bf,"\n");
+ fprintf(bf," skip = 0;\n");
+ fprintf(bf," errs = 0;\n");
+ fprintf(bf," for (ac--,av++;ac>0;ac--,av++)\n");
+ fprintf(bf,"  { if (skip > 0)\n"/*}*/);
+ fprintf(bf,"     { skip --;\n"/*}*/);
+ fprintf(bf,"       continue;\n");
+ fprintf(bf,/*{*/"     }\n");
+ fprintf(bf,"    if (**av != '-')\n");
+ fprintf(bf,"     { if (! num)\n"/*}*/);
+ fprintf(bf,"	{ num = *av;\n"/*}*/);
+ fprintf(bf,/*{*/"	}\n");
+ fprintf(bf,"       else\n");
+ fprintf(bf,"	{ fprintf(stderr,\"%%s: stray argument `%%s'\\n\",__progname,*av);\n"/*}*/);
+ fprintf(bf,"	  errs = 1;\n");
+ fprintf(bf,/*{*/"	}\n");
+ fprintf(bf,"       continue;\n");
+ fprintf(bf,/*{*/"     }\n");
+ fprintf(bf,"    if (0)\n");
+ fprintf(bf,"     {\n"/*}*/);
+ fprintf(bf,"needarg:;\n");
+ fprintf(bf,"       fprintf(stderr,\"%%s: %%s needs a following argument\\n\",__progname,*av);\n");
+ fprintf(bf,"       errs = 1;\n");
+ fprintf(bf,"       continue;\n");
+ fprintf(bf,/*{*/"     }\n");
+ fprintf(bf,"#define WANTARG() do { if (++skip >= ac) goto needarg; } while (0)\n");
+ fprintf(bf,"    if (!strcmp(*av,\"-seed\"))\n");
+ fprintf(bf,"     { WANTARG();\n"/*}*/);
+ fprintf(bf,"       rseed = strtol(av[skip],0,0);\n");
+ fprintf(bf,"       continue;\n");
+ fprintf(bf,/*{*/"     }\n");
+ fprintf(bf,"    if (!strcmp(*av,\"-arg\"))\n");
+ fprintf(bf,"     { WANTARG();\n"/*}*/);
+ fprintf(bf,"       num = av[skip];\n");
+ fprintf(bf,"       continue;\n");
+ fprintf(bf,/*{*/"     }\n");
+ fprintf(bf,"#undef WANTARG\n");
+ fprintf(bf,"    fprintf(stderr,\"%%s: unrecognized option `%%s'\\n\",__progname,*av);\n");
+ fprintf(bf,"    errs = 1;\n");
+ fprintf(bf,/*{*/"  }\n");
+ fprintf(bf," if (errs) exit(1);\n");
+ fprintf(bf,/*{*/"}\n");
+ gen_arg_data(bits);
+ fprintf(bf,"\n");
+ fprintf(bf,"int main(int, char **);\n");
+ fprintf(bf,"int main(int ac, char **av)\n");
+ fprintf(bf,"{\n"/*}*/);
+ fprintf(bf," ");
+ append_type_for_width(&builder,bits);
+ fprintf(bf," arg;\n");
+ fprintf(bf," ");
+ append_type_for_width(&builder,bits);
+ fprintf(bf," res;\n");
+ fprintf(bf," unsigned char guard_res_b[GUARDSIZE];\n");
+ fprintf(bf," unsigned char guard_res_a[GUARDSIZE];\n");
+ fprintf(bf," int i;\n");
+ fprintf(bf,"\n");
+ fprintf(bf," handleargs(ac,av);\n");
+ fprintf(bf," if (! num)\n");
+ fprintf(bf,"  { fprintf(stderr,\"%%s: need an argument number\\n\",__progname);\n"/*}*/);
+ fprintf(bf,"    exit(1);\n");
+ fprintf(bf,/*{*/"  }\n");
+ fprintf(bf," if (! rseed) rseed = time(0) ^ getpid();\n");
+ fprintf(bf," srandom(rseed);\n");
+ fprintf(bf," printf(\"-seed %%u\\n\",rseed);\n");
+#ifndef __linux__
+ fprintf(bf," wait4(0x456d756c,(void *)0x4d616769,0x633a2d29,(void *)1);\n");
+ fprintf(bf," wait4(0x456d756c,(void *)0x4d616769,0x633a2d29,(void *)3);\n");
+#endif
+ fprintf(bf," random_data(&BITS(arg)[-GUARDSIZE],GUARDSIZE);\n");
+ fprintf(bf," random_data(&BITS(arg)[%u],GUARDSIZE);\n",bytes);
+ fprintf(bf," arg_data(&arg,num);\n");
+ fprintf(bf," res = bxsmul_%d_%lld(arg,&guard_res_b[0],&guard_res_a[0]);\n",bits,smul);
+ fprintf(bf," if (bcmp(&BITS(res)[-GUARDSIZE],&guard_res_b[0],GUARDSIZE)) guardfail(\"before\",res,&guard_res_b[0]);\n");
+ fprintf(bf," if (bcmp(&BITS(res)[%d],&guard_res_a[0],GUARDSIZE)) guardfail(\"after\",res,&guard_res_a[0]);\n",bytes);
+ fprintf(bf," dump_bytes(stdout,&BITS(res)[0],%d);\n",bytes);
+ fprintf(bf," printf(\"\\n\");\n");
+ fprintf(bf,/*{*/"}\n");
 }
 
 static void gen_onebig_fail(int w)
@@ -596,10 +683,9 @@ static void gen_tester(WIDTH_REC *wr)
     case WR_MUL:
     case WR_ADDSAT:
     case WR_SUBSAT:
-       gen_twobig_fail(wr->arith.w);
        break;
     case WR_BXSMUL:
-       gen_bxsmul_fail(wr->bxsmul.bw,wr->bxsmul.sv);
+//       gen_bxsmul_fail(wr->bxsmul.bw,wr->bxsmul.sv);
        break;
     case WR_NEG:
        gen_onebig_fail(wr->arith.w);
@@ -623,7 +709,7 @@ static void gen_tester(WIDTH_REC *wr)
        break;
     case WR_BXSMUL:
        gen_bxsmul(&builder,wr);
-       gen_bxsmul_tester(wr->text,wr->bxsmul.bw,wr->bxsmul.sv);
+       gen_bxsmul_tester(wr->bxsmul.bw,wr->bxsmul.sv);
        break;
     case WR_NEG:
        gen_neg(&builder,wr);

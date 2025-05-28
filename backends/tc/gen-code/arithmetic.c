@@ -116,24 +116,33 @@ static void gen_mul(BUILDER *bld, const WIDTH_REC *wr)
 static void gen_bxsmul(BUILDER *bld, const WIDTH_REC *wr)
 {
  unsigned int bw;
- unsigned int sv;
+ unsigned long long int sv;
  unsigned int b;
- unsigned int i;
+ int i;
+ const char *suf;
 
  assert(wr->type == WR_BXSMUL);
  bw = wr->bxsmul.bw;
  sv = wr->bxsmul.sv;
  b = (bw + 7) >> 3;
  bld->newline();
- bld->appendFormat("static __always_inline struct internal_bit_%u bxsmul_%u_%u(struct internal_bit_%u arg)\n",bw,bw,sv,bw,bw);
+ bld->appendFormat("static __always_inline struct internal_bit_%u bxsmul_%u_%llu(struct internal_bit_%u arg GUARDARGS)\n",bw,bw,sv,bw);
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",bw);
- bld->append(" u32 a;\n");
+ if (sv > 0x007fffff)
+  { bld->append(" u64 a;\n");
+    suf = "ULL";
+  }
+ else
+  { bld->append(" u32 a;\n");
+    suf = "U";
+  }
  bld->append("\n");
- for (i=0;i<b;i++)
-  { bld->appendFormat(" a =%s (BITS(arg)[%u] * %u);\n",i?" (a >> 8) +":"",i,sv);
+ bld->append(" SETGUARDS(ret);\n");
+ for (i=b-1;i>=0;i--)
+  { bld->appendFormat(" a =%s (BITS(arg)[%u] * %llu%s);\n",(i<b-1)?" (a >> 8) +":"",i,sv,suf);
     bld->appendFormat(" BITS(ret)[%u] = a & ",i);
-    if (i+1 < b) bld->append("255"); else bld->appendFormat("%u",255U>>((b*8)-bw));
+    if (i > 0) bld->append("255"); else bld->appendFormat("%u",255U>>((b*8)-bw));
     bld->append(";\n");
   }
  bld->append(" return(ret);\n");
