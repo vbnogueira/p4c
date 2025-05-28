@@ -41,7 +41,7 @@ static void gen_add(BUILDER *bld, const WIDTH_REC *wr)
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",bits);
  // really need only u9, but can't count on that existing, ugh
- // (for that matter, can count on u16 existing only pragmatically)
+ // (for that matter, can't count on u16 existing except pragmatically)
  bld->append(" u16 a;\n");
  bld->append("\n");
  bld->append(" SETGUARDS(ret);\n");
@@ -69,7 +69,7 @@ static void gen_sub(BUILDER *bld, const WIDTH_REC *wr)
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
  // really need only u9, but can't count on that existing, ugh
- // (for that matter, can count on u16 existing only pragmatically)
+ // (for that matter, can't count on u16 existing except pragmatically)
  bld->append(" u16 a;\n");
  bld->append("\n");
  bld->append(" SETGUARDS(ret);\n");
@@ -228,7 +228,7 @@ static void gen_addsat(BUILDER *bld, const WIDTH_REC *wr)
   }
  else
   { // really need only u9, but can't count on that existing, ugh
-    // (for that matter, can count on u16 existing only pragmatically)
+    // (for that matter, can't count on u16 existing except pragmatically)
     bld->append(" u16 a;\n");
     bld->append("\n");
     bld->append(" SETGUARDS(ret);\n");
@@ -290,34 +290,36 @@ static void gen_addsat(BUILDER *bld, const WIDTH_REC *wr)
  */
 static void gen_subsat(BUILDER *bld, const WIDTH_REC *wr)
 {
- unsigned int w;
- int b;
+ unsigned int bits;
+ int bytes;
  int i;
 
  assert(wr->type == WR_SUBSAT);
- w = wr->sarith.w;
- b = (w + 7) >> 3;
+ bits = wr->sarith.w;
+ bytes = (bits + 7) >> 3;
  bld->newline();
  bld->append("static __always_inline ");
- append_type_for_width(bld,w);
- bld->appendFormat(" subsat_%d(",w);
- append_type_for_width(bld,w);
+ append_type_for_width(bld,bits);
+ bld->appendFormat(" subsat_%d(",bits);
+ append_type_for_width(bld,bits);
  bld->append(" lhs, ");
- append_type_for_width(bld,w);
- bld->append(" rhs)\n");
+ append_type_for_width(bld,bits);
+ bld->append(" rhs");
+ if (bits > 64) bld->append(" GUARDARGS");
+ bld->append(")\n");
  bld->append("{\n"/*}*/);
  bld->append(" ");
- append_type_for_width(bld,w);
+ append_type_for_width(bld,bits);
  bld->append(" ret;\n");
  bld->append("\n");
- if (w <= 64)
+ if (bits <= 64)
   { unsigned long long int max;
-    max = (w < 64) ? (1ULL << w) - 1ULL : 0xffffffffffffffffULL;
+    max = (bits < 64) ? (1ULL << bits) - 1ULL : 0xffffffffffffffffULL;
     if (wr->sarith.issigned)
      { // let the optimizer delete the &0x...ULL when appropriate
        bld->appendFormat(" ret = (lhs - rhs) & 0x%llxULL;\n",max);
        bld->appendFormat(" if ((lhs ^ rhs) & ~(ret ^ rhs) & (1ULL << %u)) ret = (ret & (1ULL << %u)) ? 0x%llxULL : 0x%llxULL;\n",
-		w-1, w-1, max, max&~(max>>1));
+		bits-1, bits-1, max, max&~(max>>1));
      }
     else
      { bld->appendFormat(" ret = (rhs > lhs) ? 0 : lhs - rhs;\n",max);
@@ -325,31 +327,32 @@ static void gen_subsat(BUILDER *bld, const WIDTH_REC *wr)
   }
  else
   { unsigned int signbit;
-    signbit = 128U >> ((b * 8) - w);
+    signbit = 128U >> ((bytes * 8) - bits);
     // really need only u9, but can't count on that existing, ugh
-    // (for that matter, can count on u16 existing only pragmatically)
+    // (for that matter, can't count on u16 existing except pragmatically)
     bld->append(" u16 a;\n");
     bld->append("\n");
-    for (i=0;i<b;i++)
-     { bld->appendFormat(" a = BITS(lhs)[%d] + ~BITS(rhs)[%d] + %s;\n",i,i,i?"(a >> 8)":"1");
-       bld->appendFormat(" BITS(ret)[%d] = a & ",i);
-       if (i+1 < b) bld->append("255"); else bld->appendFormat("%d",255>>((b*8)-w));
+    bld->append(" SETGUARDS(ret);\n");
+    for (i=bytes-1;i>=0;i--)
+     { bld->appendFormat(" a = BITS(lhs)[%u] - BITS(rhs)[%u]%s;\n",i,i,i?" - ((a >> 8) & 1)":"");
+       bld->appendFormat(" BITS(ret)[%u] = a & ",i);
+       if (i > 0) bld->append("255"); else bld->appendFormat("%u",255>>((bytes*8)-bits));
        bld->append(";\n");
      }
     if (wr->sarith.issigned)
-     { bld->appendFormat(" if ((BITS(lhs)[%u] ^ BITS(rhs)[%u]) & ~(a ^ BITS(rhs)[%u]) & %u)\n",b-1,b-1,b-1,signbit);
+     { bld->appendFormat(" if ((BITS(lhs)[0] ^ BITS(rhs)[0]) & ~(a ^ BITS(rhs)[0]) & %u)\n",signbit);
        bld->appendFormat("  { if (a & %u)\n"/*}*/,signbit);
-       bld->appendFormat("     { __builtin_memset(&BITS(ret)[0],255,%u);\n"/*}*/,b-1);
-       bld->appendFormat("       BITS(ret)[%u] = %u;\n",b-1,signbit-1);
+       bld->appendFormat("     { __builtin_memset(&BITS(ret)[1],255,%u);\n"/*}*/,bytes-1);
+       bld->appendFormat("       BITS(ret)[0] = %u;\n",signbit-1);
        bld->append(/*{*/"     }\n");
        bld->append("    else\n");
-       bld->appendFormat("     { __builtin_memset(&BITS(ret)[0],0,%u);\n"/*}*/,b-1);
-       bld->appendFormat("       BITS(ret)[%u] = %u;\n",b-1,signbit);
+       bld->appendFormat("     { __builtin_memset(&BITS(ret)[1],0,%u);\n"/*}*/,bytes-1);
+       bld->appendFormat("       BITS(ret)[0] = %u;\n",signbit);
        bld->append(/*{*/"     }\n");
        bld->append(/*{*/"  }\n");
      }
     else
-     { bld->appendFormat(" if (a <= %u) __builtin_memset(&BITS(ret)[0],0,%u);\n",signbit|(signbit-1),b);
+     { bld->appendFormat(" if (a <= %u) __builtin_memset(&BITS(ret)[0],0,%u);\n",signbit|(signbit-1),bytes);
      }
   }
  bld->append(" return(ret);\n");
