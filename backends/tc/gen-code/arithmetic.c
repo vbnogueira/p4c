@@ -141,7 +141,7 @@ static void gen_bxsmul(BUILDER *bld, const WIDTH_REC *wr)
  bld->append("\n");
  bld->append(" SETGUARDS(ret);\n");
  for (i=b-1;i>=0;i--)
-  { bld->appendFormat(" a =%s (BITS(arg)[%u] * %llu%s);\n",(i<b-1)?" (a >> 8) +":"",i,sv,suf);
+  { bld->appendFormat(" a =%s (BITS(arg)[%u] * %llu%s);\n",(i<(int)b-1)?" (a >> 8) +":"",i,sv,suf);
     bld->appendFormat(" BITS(ret)[%u] = a & ",i);
     if (i > 0) bld->append("255"); else bld->appendFormat("%u",255U>>((b*8)-bw));
     bld->append(";\n");
