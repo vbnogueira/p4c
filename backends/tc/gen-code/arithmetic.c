@@ -154,22 +154,26 @@ static void gen_neg(BUILDER *bld, const WIDTH_REC *wr)
  unsigned int w;
  int i;
  int j;
+ int bytes;
 
  assert(wr->type == WR_NEG);
  w = wr->arith.w;
  assert(w > 64);
+ bytes = (w + 7) >> 3;
  bld->newline();
- bld->appendFormat("static __always_inline struct internal_bit_%u neg_%u(struct internal_bit_%u arg)\n",w,w,w);
+ bld->appendFormat("static __always_inline struct internal_bit_%u neg_%u(struct internal_bit_%u arg GUARDARGS)\n",w,w,w);
  bld->append("{\n"/*}*/);
  bld->append(" u16 a;\n");
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
  bld->append("\n");
+ bld->append(" SETGUARDS(ret);\n");
  for (i=(w>>3)-1,j=0;i>=0;i--,j++)
-  { bld->appendFormat(" a = %s + (255 ^ BITS(arg)[%d]);\n",j?"(a >> 8)":"1",j);
-    bld->appendFormat(" BITS(ret)[%d] = a & 255;\n",j);
+  { bld->appendFormat(" a = %s + (255 ^ BITS(arg)[%d]);\n",j?"(a >> 8)":"1",bytes-1-j);
+    bld->appendFormat(" BITS(ret)[%d] = a & 255;\n",bytes-1-j);
   }
  if (w & 7)
-  { bld->appendFormat(" BITS(ret)[%d] = (%s + (255 ^ BITS(arg)[%d])) & %d;\n",j?"(a >> 8)":"1",j,j,(1<<(w&7))-1);
+  { // always a>>8: w>64, so the above loop ran >once
+    bld->appendFormat(" BITS(ret)[0] = ((a >> 8) + (255 ^ BITS(arg)[0])) & %d;\n",(1<<(w&7))-1);
   }
  bld->append(" return(ret);\n");
  bld->append(/*{*/"}\n");

@@ -493,7 +493,7 @@ static void gen_twobig_tester(const char *optext, int bits)
  fprintf(bf,/*{*/"}\n");
 }
 
-static void gen_bxsmul_tester(int bits, long long int smul)
+static void gen_onebig_tester(int bits, void (*gen_call)(void *), void *arg)
 {
  int bytes;
 
@@ -579,7 +579,9 @@ static void gen_bxsmul_tester(int bits, long long int smul)
  fprintf(bf," random_data(&BITS(arg)[-GUARDSIZE],GUARDSIZE);\n");
  fprintf(bf," random_data(&BITS(arg)[%u],GUARDSIZE);\n",bytes);
  fprintf(bf," arg_data(&arg,num);\n");
- fprintf(bf," res = bxsmul_%d_%lld(arg,&guard_res_b[0],&guard_res_a[0]);\n",bits,smul);
+ fprintf(bf," res = ");
+ (*gen_call)(arg);
+ fprintf(bf,"(arg,&guard_res_b[0],&guard_res_a[0]);\n");
  fprintf(bf," if (bcmp(&BITS(res)[-GUARDSIZE],&guard_res_b[0],GUARDSIZE)) guardfail(\"before\",res,&guard_res_b[0]);\n");
  fprintf(bf," if (bcmp(&BITS(res)[%d],&guard_res_a[0],GUARDSIZE)) guardfail(\"after\",res,&guard_res_a[0]);\n",bytes);
  fprintf(bf," dump_bytes(stdout,&BITS(res)[0],%d);\n",bytes);
@@ -587,14 +589,20 @@ static void gen_bxsmul_tester(int bits, long long int smul)
  fprintf(bf,/*{*/"}\n");
 }
 
-static void gen_onebig_fail(int w)
+static void gen_bxsmul_call(void *wrv)
 {
- (void)w;
+ WIDTH_REC *wr;
+
+ wr = wrv;
+ fprintf(bf,"bxsmul_%d_%lld",wr->bxsmul.bw,wr->bxsmul.sv);
 }
 
-static void gen_onebig_tester(const char *optext, int w)
+static void gen_onebig_call(void *wrv)
 {
- (void)optext; (void)w;
+ WIDTH_REC *wr;
+
+ wr = wrv;
+ fprintf(bf,"%s_%d",wr->text,wr->arith.w);
 }
 
 static void gen_tester(WIDTH_REC *wr)
@@ -679,23 +687,6 @@ static void gen_tester(WIDTH_REC *wr)
  fprintf(bf,/*{*/"}\n");
  switch (wr->type)
   { case WR_ADD:
-    case WR_SUB:
-    case WR_MUL:
-    case WR_ADDSAT:
-    case WR_SUBSAT:
-       break;
-    case WR_BXSMUL:
-//       gen_bxsmul_fail(wr->bxsmul.bw,wr->bxsmul.sv);
-       break;
-    case WR_NEG:
-       gen_onebig_fail(wr->arith.w);
-       break;
-    default:
-       abort();
-       break;
-  }
- switch (wr->type)
-  { case WR_ADD:
        gen_add(&builder,wr);
        gen_twobig_tester(wr->text,wr->arith.w);
        break;
@@ -709,11 +700,11 @@ static void gen_tester(WIDTH_REC *wr)
        break;
     case WR_BXSMUL:
        gen_bxsmul(&builder,wr);
-       gen_bxsmul_tester(wr->bxsmul.bw,wr->bxsmul.sv);
+       gen_onebig_tester(wr->bxsmul.bw,&gen_bxsmul_call,wr);
        break;
     case WR_NEG:
        gen_neg(&builder,wr);
-       gen_onebig_tester(wr->text,wr->arith.w);
+       gen_onebig_tester(wr->arith.w,&gen_onebig_call,wr);
        break;
     case WR_ADDSAT:
        gen_addsat(&builder,wr);
