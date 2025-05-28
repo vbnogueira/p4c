@@ -93,18 +93,19 @@ static void gen_mul(BUILDER *bld, const WIDTH_REC *wr)
  w = wr->arith.w;
  b = (w + 7) >> 3;
  bld->newline();
- bld->appendFormat("static __always_inline struct internal_bit_%u mul_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs)\n",w,w,w,w);
+ bld->appendFormat("static __always_inline struct internal_bit_%u mul_%u(struct internal_bit_%u lhs, struct internal_bit_%u rhs GUARDARGS)\n",w,w,w,w);
  bld->append("{\n"/*}*/);
  bld->appendFormat(" struct internal_bit_%u ret;\n",w);
  bld->append(" u32 a;\n");
  bld->append("\n");
+ bld->append(" SETGUARDS(ret);\n");
  for (i=0;i<b;i++)
   { bld->appendFormat(" a =%s",i?" (a >> 8) +":"");
     for (j=i;j>=0;j--)
-     { bld->appendFormat(" (BITS(lhs)[%d] * BITS(rhs)[%d])%s",j,(int)i-j,j?" +":"");
+     { bld->appendFormat(" (BITS(lhs)[%d] * BITS(rhs)[%d])%s",b-1-j,b-1-((int)i-j),j?" +":"");
      }
     bld->append(";\n");
-    bld->appendFormat(" BITS(ret)[%u] = a & ",i);
+    bld->appendFormat(" BITS(ret)[%u] = a & ",b-1-i);
     if (i+1 < b) bld->append("255"); else bld->appendFormat("%u",255U>>((b*8)-w));
     bld->append(";\n");
   }
