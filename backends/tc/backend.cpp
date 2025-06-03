@@ -728,6 +728,8 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
  */\n\
 #define BITS(v) (v).bits\n\
 #define ADDGUARDS(a,b) (a)\n\
+#define GUARDARGS /* nothing */\n\
+#define SETGUARDS(x) do ; while (0)\n\
 ");
  for (i=0;i<nwr;i++)
   { switch (wrv[i].type)
