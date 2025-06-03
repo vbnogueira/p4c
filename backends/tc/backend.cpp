@@ -152,14 +152,14 @@ void SCAN_WIDTHS::dump() const
 
 Visitor::profile_t SCAN_WIDTHS::init_apply(const IR::Node *n)
 {
- std::cout << "SCAN_WIDTHS init_apply" << std::endl;
+ // std::cout << "SCAN_WIDTHS init_apply" << std::endl;
  return(this->Inspector::init_apply(n));
 }
 
 void SCAN_WIDTHS::end_apply(const IR::Node *n)
 {
  Inspector::end_apply(n);
- std::cout << "SCAN_WIDTHS end_apply" << std::endl;
+ // std::cout << "SCAN_WIDTHS end_apply" << std::endl;
 }
 
 void SCAN_WIDTHS::expr_common(const IR::Expression *e)
@@ -169,7 +169,7 @@ void SCAN_WIDTHS::expr_common(const IR::Expression *e)
  t = typemap->getType(e,true);
  if (t->is<IR::Type_Type>()) t = t->to<const IR::Type_Type>()->type;
  if (t->is<IR::Type_Bits>())
-  { std::cout << "SCAN_WIDTHS preorder(" << e->toString() << "), type " << t << ", width " << t->width_bits() << std::endl;
+  { // std::cout << "SCAN_WIDTHS preorder(" << e->toString() << "), type " << t << ", width " << t->width_bits() << std::endl;
     add_width(t->width_bits());
   }
 }
@@ -873,7 +873,7 @@ bool Backend::process() {
     auto typeMapEBPF = typeMap;
     auto hook = options.getDebugHook();
     SCAN_WIDTHS *sw = new SCAN_WIDTHS(typeMap);
- std::cout << "Created SCAN_WIDTHS " << (void *)sw << std::endl;
+// std::cout << "Created SCAN_WIDTHS " << (void *)sw << std::endl;
     parseTCAnno = new ParseTCAnnotations();
     tcIR = new ConvertToBackendIR(toplevel, pipeline, refMap, typeMap, options);
     genIJ = new IntrospectionGenerator(pipeline, refMap, typeMap);
@@ -885,18 +885,18 @@ bool Backend::process() {
  sw, tcIR, genIJ});
  widths = sw;
     backEnd.addDebugHook(hook, true);
- std::cout << "before backend passes, toplevel is " << static_cast<const void *>(toplevel) <<
-	", toplevel->getProgram() is " << static_cast<const void *>(toplevel->getProgram()) << std::endl;
+// std::cout << "before backend passes, toplevel is " << static_cast<const void *>(toplevel) <<
+//	", toplevel->getProgram() is " << static_cast<const void *>(toplevel->getProgram()) << std::endl;
     auto newpgm = toplevel->getProgram()->apply(backEnd);
 // std::cout << "newpgm type is " << 
 //	", new is " << static_cast<const void *>(newtop) <<
 //		" (program " << static_cast<const void *>(newtop->getProgram()) <<
 //	std::endl;
     // toplevel->node = newpgm;
- std::cout << "after backend passes, toplevel is " << static_cast<const void *>(toplevel) <<
-	", toplevel->getProgram() is " << static_cast<const void *>(toplevel->getProgram()) << std::endl;
+// std::cout << "after backend passes, toplevel is " << static_cast<const void *>(toplevel) <<
+//	", toplevel->getProgram() is " << static_cast<const void *>(toplevel->getProgram()) << std::endl;
     if (::P4::errorCount() > 0) return false;
- widths->dump();
+// widths->dump();
     if (!ebpfCodeGen(refMapEBPF, typeMapEBPF, newpgm)) return false;
     return true;
 }
@@ -927,15 +927,15 @@ bool Backend::ebpfCodeGen(P4::ReferenceMap *refMapEBPF, P4::TypeMap *typeMapEBPF
     PassManager rewriteToEBPF = {
         evaluator,
         new VisitFunctor([this, evaluator, structure]() { 
-std::cout << "rewriteToEBPF VisitFunctor running" << std::endl;
+// std::cout << "rewriteToEBPF VisitFunctor running" << std::endl;
 top = evaluator->getToplevelBlock(); }),
     };
 
     auto hook = options.getDebugHook();
     rewriteToEBPF.addDebugHook(hook, true);
- std::cout << "ebpfCodeGen: BEGIN rewriteToEBPF" << std::endl;
+// std::cout << "ebpfCodeGen: BEGIN rewriteToEBPF" << std::endl;
     program = program->apply(rewriteToEBPF);
- std::cout << "ebpfCodeGen: END rewriteToEBPF" << std::endl;
+// std::cout << "ebpfCodeGen: END rewriteToEBPF" << std::endl;
 
     // map IR node to compile-time allocated resource blocks.
     top->apply(*new P4::BuildResourceMap(&structure.resourceMap));
@@ -973,7 +973,7 @@ void Backend::serialize() const {
     ebpf_program->emitParser(&p);
     ebpf_program->emitHeader(&h);
     if (widths) {
-	widths->dump();
+//	widths->dump();
 	widths->gen_h(&h);
 	widths->gen_c(&c); 
     } else {
