@@ -711,22 +711,24 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
  bld->appendLine("");
  // There's a comment before the gen_sh*() functions which refers to
  //  this next comment.
- bld->appendLine("/*");
- bld->appendLine(" * These #defines exist so shift generation functions can be shared");
- bld->appendLine(" *  verbatim with the shifter test program.  By defining them suitably,");
- bld->appendLine(" *  the test programs can check for bits[] array overruns.");
- bld->appendLine(" *");
- bld->appendLine(" * We could copy the code between the shift development program and");
- bld->appendLine(" *  here, editing it in the process.  I prefer to share the code");
- bld->appendLine(" *  verbatim, with #defines used as necessary to change what needs");
- bld->appendLine(" *  changing.");
- bld->appendLine(" *");
- bld->appendLine(" * Some of these may be unnecessary, depending on what code is");
- bld->appendLine(" *  generated.  But they're all harmless even if they're unused, so we");
- bld->appendLine(" *  always produce them.");
- bld->appendLine(" */");
- bld->appendLine("#define BITS(v) (v).bits");
- bld->appendLine("#define ADDGUARDS(a,b) (a)");
+ bld->append("\
+/*\n\
+ * These #defines exist so code generation functions can be shared\n\
+ *  verbatim with the test programs.  By defining them suitably, the\n\
+ *  test programs can check for bits[] array overruns.\n\
+ *\n\
+ * We could copy the code between the development/test program and\n\
+ *  here, editing it in the process.  I prefer to share the code\n\
+ *  verbatim, with #defines used as necessary to change what needs\n\
+ *  changing.\n\
+ *\n\
+ * Some of these may be unnecessary, depending on what code is\n\
+ *  generated.  But they're all harmless even if they're unused, so we\n\
+ *  always produce them.\n\
+ */\n\
+#define BITS(v) (v).bits\n\
+#define ADDGUARDS(a,b) (a)\n\
+");
  for (i=0;i<nwr;i++)
   { switch (wrv[i].type)
      { case WR_VALUE:
