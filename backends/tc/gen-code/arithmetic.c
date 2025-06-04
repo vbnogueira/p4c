@@ -31,6 +31,7 @@ static void gen_add(BUILDER *bld, const WIDTH_REC *wr)
  unsigned int bits;
  unsigned int bytes;
  int i;
+ const char *suf;
 
  assert(wr->type == WR_ADD);
  bits = wr->arith.w;
@@ -45,8 +46,10 @@ static void gen_add(BUILDER *bld, const WIDTH_REC *wr)
  bld->append(" u16 a;\n");
  bld->append("\n");
  bld->append(" SETGUARDS(ret);\n");
+ suf = "";
  for (i=bytes-1;i>=0;i--)
-  { bld->appendFormat(" a = BITS(lhs)[%d] + BITS(rhs)[%d]%s;\n",i,i,i?" + (a >> 8)":"");
+  { bld->appendFormat(" a = BITS(lhs)[%d] + BITS(rhs)[%d]%s;\n",i,i,suf);
+    suf = " + (a >> 8)";
     bld->appendFormat(" BITS(ret)[%d] = a & ",i);
     if (i > 0) bld->append("255"); else bld->appendFormat("%u",255>>((bytes*8)-bits));
     bld->append(";\n");
@@ -60,6 +63,7 @@ static void gen_sub(BUILDER *bld, const WIDTH_REC *wr)
  unsigned int w;
  unsigned int b;
  int i;
+ const char *suf;
 
  assert(wr->type == WR_SUB);
  w = wr->arith.w;
@@ -73,8 +77,10 @@ static void gen_sub(BUILDER *bld, const WIDTH_REC *wr)
  bld->append(" u16 a;\n");
  bld->append("\n");
  bld->append(" SETGUARDS(ret);\n");
+ suf = "";
  for (i=b-1;i>=0;i--)
-  { bld->appendFormat(" a = BITS(lhs)[%u] - BITS(rhs)[%u]%s;\n",i,i,i?" - ((a >> 8) & 1)":"");
+  { bld->appendFormat(" a = BITS(lhs)[%u] - BITS(rhs)[%u]%s;\n",i,i,suf);
+    suf = " - ((a >> 8) & 1)";
     bld->appendFormat(" BITS(ret)[%u] = a & ",i);
     if (i > 0) bld->append("255"); else bld->appendFormat("%u",255>>((b*8)-w));
     bld->append(";\n");
