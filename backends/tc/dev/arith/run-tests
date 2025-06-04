@@ -1,8 +1,35 @@
 #! /bin/sh
 
-#ops="add sub mul bxsmul neg addsat subsat"
-opsASM="add sub mul"
+# We break up the ops into four classes:
+#	add sub mul
+#	bxsmul
+#	neg
+#	addsat subsat
+#  This separation is based on the distinctive characteristics of each
+#  class:
+#
+# add sub mul
+#	These have simple code generation (just a width), take two
+#	large args at test time, and have simple calc code to compute
+#	the correct result.
+# bxsmul
+#	This takes width-and-multiplier at code generation time and
+#	takes only one large arg at test time.
+# neg
+#	This takes only a width for code generation and only one large
+#	arg at test time.
+# addsat subsat
+#	These take an additional signedness indication at code
+#	generation time, as compared to add and sub.
+#
+# The reason we have variables is so that we can control which tests
+#  run by commenting and uncommenting variable assignments here, rather
+#  than having to fiddle code further down.
 
+opsASM="add sub mul"
+opsBXS=bxsmul
+opsNEG=neg
+opsSAT="addsat subsat"
 
 PATH=.:$PATH
 
@@ -66,12 +93,12 @@ rn() {
 	echo $val
 }
 
-
-
+# n1 n2 width
 calc_add() {
 	(echo "?b16"; echo "p = pow(2,#d$3);"; echo "r = 0$1 + 0$2 ;"; echo "r - (p * int(r/p))") | calc -q | tail -1
 }
 
+# n1 n2 width
 calc_sub() {
 	local d
 	d=`(echo "?b16"; echo "0$1 - 0$2") | calc -q | tail -1`
@@ -83,8 +110,156 @@ calc_sub() {
 	esac
 }
 
+# n1 n2 width
 calc_mul() {
 	(echo "?b16"; echo "p = pow(2,#d$3);"; echo "r = 0$1 * 0$2 ;"; echo "r - (p * int(r/p))") | calc -q | tail -1
+}
+
+# n width mul
+calc_bxsmul() {
+	(echo "?b16"; echo "p = pow(2,#d$2);"; echo "r = 0$1 * cvt(#d$3,10) ;"; echo "r - (p * int(r/p))") | calc -q | tail -1
+}
+
+# n width
+calc_neg() {
+	case "$1" in
+		*[!0]*)	(echo "?b16"; echo "pow(2,#d$2) - 0$1") | calc -q | tail -1 ;;
+		*)	echo 0 ;;
+	esac
+}
+
+# n1 n2 width
+calc_addsat_u() {
+	local r r1 r2 r3 i rt
+	r=`(echo "?b16"; echo "?e+2047"; echo "v = 0$1 + 0$2"; echo "p = pow(2,#d$3);"; echo p-v; echo p-1) | calc -q | tr \\\n .`
+	rt=${r%.}
+	for i in 3 2 1; do
+		eval r$i=\$\{rt##*.\}
+		rt=${rt%.*}
+	done
+	case "$r2" in
+		-*)	echo $r3;;
+		*)	echo $r1;;
+	esac
+}
+
+# n1 n2 width
+calc_addsat_s() {
+	local r r1 r2 r3 r4 r5 r6 r7 i rt
+	r=`(	echo "?b16"
+		echo "?e+2047"
+		echo "p = pow(2,#d$3-#d1);"
+		echo "int(0$1/p)"	# r1 = n1 sign bit
+		echo "int(0$2/p)"	# r2 = n2 sign bit
+		echo "v = 0$1 + 0$2"	# r3 = unsigned sum
+		echo "int(v/p)"		# r4 = sign bit count
+		echo p			# r5 = -ve overflow value
+		echo p-1		# r6 = +ve overflow value
+		echo "v-(2*p)"		# r7 = no-overflow sum
+		) | calc -q | tr \\\n .`
+	rt=${r%.}
+	for i in 7 6 5 4 3 2 1; do
+		eval r$i=\$\{rt##*.\}
+		rt=${rt%.*}
+	done
+	case $r1$r2 in
+		01|10)	# Signs differ; cannot overflow.
+			# Strip calculated overflow, if any.
+			case $r4 in
+				1)	echo $r3;;
+				2)	echo $r7;;
+				*)	exec 1>&2
+					echo Impossible addsat_s: args $1 $2 $3
+					exit 1
+					;;
+			esac
+			;;
+		00)	# Both positive; check for overflow.
+			case $r4 in
+				0)	echo $r3;;
+				*)	echo $r6;;
+			esac
+			;;
+		11)	# Both negative; check for overflow.
+			case $r4 in
+				3)	echo $r7;;
+				*)	echo $r5;;
+			esac
+			;;
+	esac
+}
+
+# n1 n2 width
+calc_subsat_u() {
+	local r
+	r=`(	echo "?b16"
+		echo "?e+2047"
+		echo "p = pow(2,#d$3-#d1);"
+		echo "v = 0$1 - 0$2"	# r1 = difference
+		) | calc -q | tr \\\n .`
+	r=${r%.}
+	r=${r##*.}
+	case $r in
+		-*)	echo 0;;
+		*)	echo $r;;
+	esac
+}
+
+# n1 n2 width
+calc_subsat_s() {
+	local r r1 r2 r3 r4 r5 r6 r7 r8 i rt
+	r=`(	echo "?b16"
+		echo "?e+2047"
+		echo "s = pow(2,#d$3-#d1);"
+		echo "int(0$1/s)"	# r1 = n1 sign bit
+		echo "int(0$2/s)"	# r2 = n2 sign bit
+		echo "v = 0$1 - 0$2"	# r3 = difference
+		echo s			# r4 = -ve overflow value
+		echo s-1		# r5 = +ve overflow value
+		echo "v+(2*s)"		# r6 = fixed-up difference
+		echo "v+s"		# r7 = +ve overflow check
+		echo "v-s"		# r8 = -ve overflow check
+		) | calc -q | tr \\\n .`
+	rt=${r%.}
+	for i in 8 7 6 5 4 3 2 1; do
+		eval r$i=\$\{rt##*.\}
+		rt=${rt%.*}
+	done
+	# In comments here, p is 2^width and s is p/2 (ie, the sign
+	#  bit).  n1 and n2 are the input arguments; N1 and N2 are the
+	#  conceptual values (equal to n1 and n2 when they're
+	#  nonnegative, or to n1-p and n2-p when they're negative).
+	case $r1$r2 in
+		00|11)	# Same signs; cannot overflow.
+			# Just fix up negative values.
+			case $r3 in
+				-*)	echo $r6;;
+				*)	echo $r3;;
+			esac
+			;;
+		01)	# +ve - -ve.  Fixup result; check for (positive) overflow.
+			# $r3 will always be negative; it is
+			#	$r3 = n1 - n2 = n1 - (N2 + p) = (n1 - N2) - p
+			#  Overflow occurs when n1-N2 >= s, or $r3 >= -s, which
+			#  we detect by looking at r7.  Absent overflow, our
+			#  return value is n1-N2=$r3+p=$r6.
+			case $r7 in
+				-*)	echo $r6;;
+				*)	echo $r5;;
+			esac
+			;;
+		10)	# -ve - +ve.  Check for (negative) overflow.
+			# $r3 will always be nonnegative; it is
+			#	r3 = n1 - n2 = (N1 + p) - n2 = (N1 - n2) + p
+			#  Overflow occurs when N1-n2 < -s, or $r3 < s, which
+			#  we detect by looking at r8.  Absent overflow, our
+			#  return value is N1-n2+p=$r3.
+			case $r8 in
+				-*)	echo $r4;;
+				*)	echo $r3;;
+			esac
+			;;
+	esac
 }
 
 for op in $opsASM
@@ -104,19 +279,135 @@ do
 			n1=`rn $w`
 			n2=`rn $w`
 			cr=`eval calc_$op $n1 $n2 $w`
+			while case $cr in 0*) :;; *) false;; esac; do cr=${cr#0}; done
 			tr=`foo/foo $n1 $n2 | tail -1`
 			while case $tr in 0*) :;; *) false;; esac; do tr=${tr#0}; done
-			if [ $cr \!= $tr ]; then
+			if [ "$cr" \!= "$tr" ]; then
 				echo ""
 				echo FAIL $op $w $n1 $n2
-				echo calc result $cr
-				echo test result $tr
+				echo "calc result $cr"
+				echo "test result $tr"
 				exit 1
 			fi
 			m=$(($m + 1))
 			case $m in *00) echo -n . ;; esac
 		done
 		echo ""
+		w=$(($w + 1))
+	done
+done
+
+for op in $opsBXS
+do
+	echo $op
+	bw=65
+	while [ $bw -le 128 ]
+	do
+		for sw in 8 16 32 51
+		do
+			echo -n $bw $sw
+			t=0
+			while [ $t -lt 1000 ]
+			do
+				m=`rn $sw | cvtbase x d`
+				if ! tester $op $bw $m; then
+					echo "tester $op $bw $m failed" 1>&2
+					exit 1
+				fi
+				i=0
+				while [ $i -lt 100 ]
+				do
+					n=`rn $bw`
+					cr=`eval calc_$op $n $bw $m`
+					while case $cr in 0*) :;; *) false;; esac; do cr=${cr#0}; done
+					tr=`foo/foo $n | tail -1`
+					while case $tr in 0*) :;; *) false;; esac; do tr=${tr#0}; done
+					if [ "$cr" \!= "$tr" ]; then
+						echo ""
+						echo FAIL $op $n $bw $m
+						echo "calc result $cr"
+						echo "test result $tr"
+						exit 1
+					fi
+					i=$(($i + 1))
+				done
+				t=$(($t + 1))
+				case $t in *00) echo -n .;; esac
+			done
+			echo ""
+		done
+		bw=$(($bw + 1))
+	done
+done
+
+for op in $opsNEG
+do
+	echo $op
+	w=65
+	while [ $w -le 128 ]
+	do
+		if ! tester $op $w; then
+			echo "tester $op $w failed" 1>&2
+			exit 1
+		fi
+		echo -n $w
+		t=0
+		while [ $t -lt 1000 ]
+		do
+			n=`rn $w`
+			cr=`eval calc_$op $n $w`
+			while case $cr in 0*) :;; *) false;; esac; do cr=${cr#0}; done
+			tr=`foo/foo $n | tail -1`
+			while case $tr in 0*) :;; *) false;; esac; do tr=${tr#0}; done
+			if [ $cr \!= $tr ]; then
+				echo ""
+				echo FAIL $op $n $bw $m
+				echo calc result $cr
+				echo test result $tr
+				exit 1
+			fi
+			t=$(($t + 1))
+			case $t in *00) echo -n . ;; esac
+		done
+		echo ""
+		w=$(($w + 1))
+	done
+done
+
+for op in $opsSAT
+do
+	echo $op
+	w=65
+	while [ $w -le 128 ]
+	do
+		for sign in s u
+		do
+			if ! tester $op $w $sign; then
+				echo "tester $op $w $sign failed" 1>&2
+				exit 1
+			fi
+			echo -n $w$sign
+			m=0
+			while [ $m -lt 1000 ]
+			do
+				n1=`rn $w`
+				n2=`rn $w`
+				cr=`eval calc_$op\_$sign $n1 $n2 $w`
+				while case $cr in 0*) :;; *) false;; esac; do cr=${cr#0}; done
+				tr=`foo/foo $n1 $n2 | tail -1`
+				while case $tr in 0*) :;; *) false;; esac; do tr=${tr#0}; done
+				if [ "$cr" \!= "$tr" ]; then
+					echo ""
+					echo FAIL $op $w $n1 $n2
+					echo "calc result $cr"
+					echo "test result $tr"
+					exit 1
+				fi
+				m=$(($m + 1))
+				case $m in *00) echo -n . ;; esac
+			done
+			echo ""
+		done
 		w=$(($w + 1))
 	done
 done
