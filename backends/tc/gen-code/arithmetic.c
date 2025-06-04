@@ -296,6 +296,7 @@ static void gen_subsat(BUILDER *bld, const WIDTH_REC *wr)
  unsigned int bits;
  int bytes;
  int i;
+ const char *suf;
 
  assert(wr->type == WR_SUBSAT);
  bits = wr->sarith.w;
@@ -336,10 +337,12 @@ static void gen_subsat(BUILDER *bld, const WIDTH_REC *wr)
     bld->append(" u16 a;\n");
     bld->append("\n");
     bld->append(" SETGUARDS(ret);\n");
+    suf = "1";
     for (i=bytes-1;i>=0;i--)
-     { bld->appendFormat(" a = BITS(lhs)[%u] - BITS(rhs)[%u]%s;\n",i,i,i?" - ((a >> 8) & 1)":"");
+     { bld->appendFormat(" a = BITS(lhs)[%u] + (BITS(rhs)[%u] ^ %d) + %s;\n",i,i,i?255:(signbit|(signbit-1)),suf);
+       suf = "((a >> 8) & 1)";
        bld->appendFormat(" BITS(ret)[%u] = a & ",i);
-       if (i > 0) bld->append("255"); else bld->appendFormat("%u",255>>((bytes*8)-bits));
+       if (i > 0) bld->append("255"); else bld->appendFormat("%u",(2*signbit)-1);
        bld->append(";\n");
      }
     if (wr->sarith.issigned)
