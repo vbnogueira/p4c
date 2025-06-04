@@ -1,0 +1,122 @@
+#! /bin/sh
+
+#ops="add sub mul bxsmul neg addsat subsat"
+opsASM="add sub mul"
+
+
+PATH=.:$PATH
+
+rn() {
+	local bits bytes val;
+	bits=$1;
+	bytes=$((($bits + 7) / 8))
+	val=`dd if=/dev/urandom bs=$bytes count=1 2>/dev/null | hexdump -v -e '1/1 "%02x"'`
+	case $(($bits % 8)) in
+		0)	;;
+		1)	case $val in
+				?[02468ace]*) val=00${val#??} ;;
+				?[13579bdf]*) val=01${val#??} ;;
+			esac
+			;;
+		2)	case $val in
+				?[048c]*) val=00${val#??} ;;
+				?[159d]*) val=01${val#??} ;;
+				?[26ae]*) val=02${val#??} ;;
+				?[37bf]*) val=03${val#??} ;;
+			esac
+			;;
+		3)	case $val in
+				?[08]*) val=00${val#??} ;;
+				?[19]*) val=01${val#??} ;;
+				?[2a]*) val=02${val#??} ;;
+				?[3b]*) val=03${val#??} ;;
+				?[4c]*) val=04${val#??} ;;
+				?[5d]*) val=05${val#??} ;;
+				?[6e]*) val=06${val#??} ;;
+				?[7f]*) val=07${val#??} ;;
+			esac
+			;;
+		4)	val=0${val#?}
+			;;
+		5)	case $val in
+				[02468ace]*) val=0${val#?} ;;
+				[13579bdf]*) val=1${val#?} ;;
+			esac
+			;;
+		6)	case $val in
+				[048c]*) val=0${val#?} ;;
+				[159d]*) val=1${val#?} ;;
+				[26ae]*) val=2${val#?} ;;
+				[37bf]*) val=3${val#?} ;;
+			esac
+			;;
+		7)	case $val in
+				[08]*) val=0${val#?} ;;
+				[19]*) val=1${val#?} ;;
+				[2a]*) val=2${val#?} ;;
+				[3b]*) val=3${val#?} ;;
+				[4c]*) val=4${val#?} ;;
+				[5d]*) val=5${val#?} ;;
+				[6e]*) val=6${val#?} ;;
+				[7f]*) val=7${val#?} ;;
+			esac
+			;;
+	esac
+#echo rn $bits -\> $val > /dev/tty
+	echo $val
+}
+
+
+
+calc_add() {
+	(echo "?b16"; echo "p = pow(2,#d$3);"; echo "r = 0$1 + 0$2 ;"; echo "r - (p * int(r/p))") | calc -q | tail -1
+}
+
+calc_sub() {
+	local d
+	d=`(echo "?b16"; echo "0$1 - 0$2") | calc -q | tail -1`
+	case $d in
+		-*)	(echo "?b16"; echo "pow(2,#d$3) - 0${d#-}") | calc -q | tail -1
+			;;
+		*)	echo $d
+			;;
+	esac
+}
+
+calc_mul() {
+	(echo "?b16"; echo "p = pow(2,#d$3);"; echo "r = 0$1 * 0$2 ;"; echo "r - (p * int(r/p))") | calc -q | tail -1
+}
+
+for op in $opsASM
+do
+	echo $op
+	w=65
+	while [ $w -le 128 ]
+	do
+		if ! tester $op $w; then
+			echo "tester $op $w failed" 1>&2
+			exit 1
+		fi
+		echo -n $w
+		m=0
+		while [ $m -lt 1000 ]
+		do
+			n1=`rn $w`
+			n2=`rn $w`
+			cr=`eval calc_$op $n1 $n2 $w`
+			tr=`foo/foo $n1 $n2 | tail -1`
+			while case $tr in 0*) :;; *) false;; esac; do tr=${tr#0}; done
+			if [ $cr \!= $tr ]; then
+				echo ""
+				echo FAIL $op $w $n1 $n2
+				echo calc result $cr
+				echo test result $tr
+				exit 1
+			fi
+			m=$(($m + 1))
+			case $m in *00) echo -n . ;; esac
+		done
+		echo ""
+		w=$(($w + 1))
+	done
+done
