@@ -743,6 +743,14 @@ static NUM *C_cvt(int nargs, NUM **args)
   { printf("invalid precision in cvt()\n");
     return(0);
   }
+ if (args[0]->zero)
+  { // converting zero is rare, but should work
+    rv = num_alloc();
+    rv->base = b;
+    rv->prec = p;
+    rv->zero = 1;
+    return(rv);
+  }
  toff = (sizeof(int) * CHAR_BIT) + 1;
  nt = p + BASEBITS + 2;
  tmp = mmalloc(nt+toff) + toff;
