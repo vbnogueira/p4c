@@ -200,6 +200,7 @@ static void gen_addsat(BUILDER *bld, const WIDTH_REC *wr)
  unsigned int bits;
  unsigned int bytes;
  int i;
+ const char *suf;
 
  assert(wr->type == WR_ADDSAT);
  bits = wr->sarith.w;
@@ -238,8 +239,10 @@ static void gen_addsat(BUILDER *bld, const WIDTH_REC *wr)
     bld->append(" u16 a;\n");
     bld->append("\n");
     bld->append(" SETGUARDS(ret);\n");
+    suf = "";
     for (i=bytes-1;i>=0;i--)
-     { bld->appendFormat(" a = BITS(lhs)[%d] + BITS(rhs)[%d]%s;\n",i,i,i?" + (a >> 8)":"");
+     { bld->appendFormat(" a = BITS(lhs)[%d] + BITS(rhs)[%d]%s;\n",i,i,suf);
+       suf = " + (a >> 8)";
        bld->appendFormat(" BITS(ret)[%d] = a & ",i);
        if (i > 0) bld->append("255"); else bld->appendFormat("%u",255>>((bytes*8)-bits));
        bld->append(";\n");
@@ -253,15 +256,9 @@ static void gen_addsat(BUILDER *bld, const WIDTH_REC *wr)
        bld->appendFormat("       BITS(ret)[0] = %u;\n",signbit);
        bld->append(/*{*/"     }\n");
        bld->append("    else\n");
-       if (bits & 7)
-	{ bld->appendFormat("     { __builtin_memset(&BITS(ret)[1],255,%u);\n"/*}*/,bytes-1);
-	  bld->appendFormat("       BITS(ret)[0] = %u;\n",signbit-1);
-	  bld->append(/*{*/"     }\n");
-	}
-       else
-	{ bld->appendFormat("     { __builtin_memset(&BITS(ret)[0],255,%u);\n"/*}*/,bytes);
-	  bld->append(/*{*/"     }\n");
-	}
+       bld->appendFormat("     { __builtin_memset(&BITS(ret)[1],255,%u);\n"/*}*/,bytes-1);
+       bld->appendFormat("       BITS(ret)[0] = %u;\n",signbit-1);
+       bld->append(/*{*/"     }\n");
        bld->append(/*{*/"  }\n");
      }
     else
