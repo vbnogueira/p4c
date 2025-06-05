@@ -95,15 +95,15 @@ rn() {
 
 # n1 n2 width
 calc_add() {
-	(echo "?b16"; echo "p = pow(2,#d$3);"; echo "r = 0$1 + 0$2 ;"; echo "r - (p * int(r/p))") | calc -q | tail -1
+	(echo "?e+2047"; echo "?b16"; echo "p = pow(2,#d$3);"; echo "r = 0$1 + 0$2 ;"; echo "r - (p * int(r/p))") | calc -q | tail -1
 }
 
 # n1 n2 width
 calc_sub() {
 	local d
-	d=`(echo "?b16"; echo "0$1 - 0$2") | calc -q | tail -1`
+	d=`(echo "?e+2047"; echo "?b16"; echo "0$1 - 0$2") | calc -q | tail -1`
 	case $d in
-		-*)	(echo "?b16"; echo "pow(2,#d$3) - 0${d#-}") | calc -q | tail -1
+		-*)	(echo "?e+2047"; echo "?b16"; echo "pow(2,#d$3) - 0${d#-}") | calc -q | tail -1
 			;;
 		*)	echo $d
 			;;
@@ -112,18 +112,18 @@ calc_sub() {
 
 # n1 n2 width
 calc_mul() {
-	(echo "?b16"; echo "p = pow(2,#d$3);"; echo "r = 0$1 * 0$2 ;"; echo "r - (p * int(r/p))") | calc -q | tail -1
+	(echo "?e+2047"; echo "?b16"; echo "p = pow(2,#d$3);"; echo "r = 0$1 * 0$2 ;"; echo "r - (p * int(r/p))") | calc -q | tail -1
 }
 
 # n width mul
 calc_bxsmul() {
-	(echo "?b16"; echo "p = pow(2,#d$2);"; echo "r = 0$1 * cvt(#d$3,10) ;"; echo "r - (p * int(r/p))") | calc -q | tail -1
+	(echo "?e+2047"; echo "?b16"; echo "p = pow(2,#d$2);"; echo "r = 0$1 * cvt(#d$3,10) ;"; echo "r - (p * int(r/p))") | calc -q | tail -1
 }
 
 # n width
 calc_neg() {
 	case "$1" in
-		*[!0]*)	(echo "?b16"; echo "pow(2,#d$2) - 0$1") | calc -q | tail -1 ;;
+		*[!0]*)	(echo "?e+2047"; echo "?b16"; echo "pow(2,#d$2) - 0$1") | calc -q | tail -1 ;;
 		*)	echo 0 ;;
 	esac
 }
@@ -131,7 +131,7 @@ calc_neg() {
 # n1 n2 width
 calc_addsat_u() {
 	local r r1 r2 r3 i rt
-	r=`(echo "?b16"; echo "?e+2047"; echo "v = 0$1 + 0$2"; echo "p = pow(2,#d$3);"; echo p-v; echo p-1) | calc -q | tr \\\n .`
+	r=`(echo "?e+2047"; echo "?b16"; echo "?e+2047"; echo "v = 0$1 + 0$2"; echo "p = pow(2,#d$3);"; echo p-v; echo p-1) | calc -q | tr \\\n .`
 	rt=${r%.}
 	for i in 3 2 1; do
 		eval r$i=\$\{rt##*.\}
@@ -146,8 +146,8 @@ calc_addsat_u() {
 # n1 n2 width
 calc_addsat_s() {
 	local r r1 r2 r3 r4 r5 r6 r7 i rt
-	r=`(	echo "?b16"
-		echo "?e+2047"
+	r=`(	echo "?e+2047"
+		echo "?b16"
 		echo "p = pow(2,#d$3-#d1);"
 		echo "int(0$1/p)"	# r1 = n1 sign bit
 		echo "int(0$2/p)"	# r2 = n2 sign bit
@@ -192,8 +192,8 @@ calc_addsat_s() {
 # n1 n2 width
 calc_subsat_u() {
 	local r
-	r=`(	echo "?b16"
-		echo "?e+2047"
+	r=`(	echo "?e+2047"
+		echo "?b16"
 		echo "p = pow(2,#d$3-#d1);"
 		echo "v = 0$1 - 0$2"	# r1 = difference
 		) | calc -q | tr \\\n .`
@@ -208,8 +208,8 @@ calc_subsat_u() {
 # n1 n2 width
 calc_subsat_s() {
 	local r r1 r2 r3 r4 r5 r6 r7 r8 i rt
-	r=`(	echo "?b16"
-		echo "?e+2047"
+	r=`(	echo "?e+2047"
+		echo "?b16"
 		echo "s = pow(2,#d$3-#d1);"
 		echo "int(0$1/s)"	# r1 = n1 sign bit
 		echo "int(0$2/s)"	# r2 = n2 sign bit
