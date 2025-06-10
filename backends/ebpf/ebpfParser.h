@@ -37,9 +37,9 @@ class StateTranslationVisitor : public CodeGenInspector {
     P4::P4CoreLibrary &p4lib;
     const EBPFParserState *state;
 
-    virtual void compileExtractField(const IR::Expression *expr, const IR::StructField *field,
-                                     unsigned hdrOffsetBits, EBPFType *type);
-    virtual void compileExtract(const IR::Expression *destination);
+    virtual unsigned int compileExtractField(const IR::Expression *, const IR::StructField *,
+                                     unsigned, EBPFType *, const char *);
+    virtual void compileExtract(const IR::Expression *dest, const IR::Expression *varsize = 0);
     virtual void compileLookahead(const IR::Expression *destination);
     void compileAdvance(const P4::ExternMethod *ext);
     void compileVerify(const IR::MethodCallExpression *expression);
@@ -64,6 +64,7 @@ class StateTranslationVisitor : public CodeGenInspector {
     }
     bool preorder(const IR::BaseAssignmentStatement *stat) override { return notSupported(stat); }
     bool preorder(const IR::AssignmentStatement *stat) override;
+    char *visit_to_string(const IR::Expression *);
 };
 
 class EBPFParserState : public EBPFObject {
