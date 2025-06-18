@@ -594,74 +594,6 @@ static void gen_concat(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  bld->append(/*{*/"}\n");
 }
 
-static void gen_cast(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
-{
- unsigned int fw;
- unsigned int tw;
- int fb1;
- int tb1;
- int fb2;
- int tb2;
-
- assert(wr->type == WR_CAST);
- fw = wr->cast.fw;
- tw = wr->cast.tw;
- fb1 = fw >> 3;
- tb1 = tw >> 3;
- fb2 = (fw + 7) >> 3;
- tb2 = (tw + 7) >> 3;
- assert(((fw>64)||(tw>64))&&(fw!=tw));
- bld->newline();
- bld->append("static __always_inline ");
- append_type_for_width(bld,tw);
- bld->appendFormat(" cast_%d_to_%u(",fw,tw);
- append_type_for_width(bld,fw);
- bld->append(" arg)\n");
- bld->append("{\n"/*}*/);
- if (tw > 64)
-  { bld->appendFormat(" struct internal_bit_%d ret;\n",tw);
-    bld->append("\n");
-    if (fw > 64)
-     { // Copy as many full bytes as both widths contain
-       bld->appendFormat(" __builtin_memcpy(&ret.bits[0],&arg.bits[0],%d);\n",(fb1<tb1)?fb1:tb1);
-       if (tw > fw)
-	{ // If we are widening...
-	  // Handle trailing partial source byte, if present.
-	  if (fb2 != fb1) bld->appendFormat(" ret.bits[%d] = arg.bits[%d] & %d;\n",fb1,fb1,~((~0U)<<(fw&7)));
-	  // Zero any further destination bytes.
-	  if (tb2 > fb2) bld->appendFormat(" __builtin_memset(&ret.bits[%d],0,%d);\n",fb2,tb2-fb2);
-	}
-       else
-	{ // If we are narrowing...
-	  // Copy trailing partial byte, if present.
-	  if (tb2 != tb1) bld->appendFormat(" ret.bits[%d] = arg.bits[%d] & %d;\n",tb1,tb1,~((~0U)<<(tw&7)));
-	}
-     }
-    else
-     { if (fw < 64) bld->appendFormat(" arg &= 0x%xULL;\n",(1ULL<<fw)-1);
-       for (int i=7;i>=0;i--) bld->appendFormat(" ret.bits[%d] = (arg >> %d) & 255;\n",i,i*8);
-       bld->appendFormat(" __builtin_memset(&ret.bits[8],0,%d);\n",((tw+7)>>3)-8);
-     }
-  }
- else
-  { bld->appendFormat(" u64 ret;\n");
-    bld->append("\n");
-    // know fw>64 from assert above, since tw<=64 here
-    const char *pref = " ret = ";
-    if (tw & 7)
-     { bld->appendFormat("%s((arg.bits[%d] & (u64)%u) << %d)",pref,tw>>3,(1U<<(tw&7))-1,tw&~7U);
-       pref = " |\n       ";
-     }
-    for (int i=(tw>>3)-1;i>=0;i--)
-     { bld->appendFormat("%s(((u64)arg->bits[%d]) << %d)",i,i*3);
-       pref = " |\n       ";
-     }
-    bld->append(";\n");
-  }
- bld->append(" return(ret);\n");
- bld->append(/*{*/"}\n");
-}
-
 /*
  * This #define exists so code generation functions can be shared with
  *  the development and test programs.  See the comment generated near
@@ -670,6 +602,7 @@ static void gen_cast(EBPF::CodeBuilder *bld, const WIDTH_REC *wr)
  */
 #define BUILDER EBPF::CodeBuilder
 
+#include "gen-code/casts.c"
 #include "gen-code/shifts.c"
 #include "gen-code/compares.c"
 #include "gen-code/arithmetic.c"
