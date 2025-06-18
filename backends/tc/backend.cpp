@@ -659,6 +659,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
  *  generated.  But they're all harmless even if they're unused, so we\n\
  *  always produce them.\n\
  */\n\
+#define INIT /* nothing */\n\
 #define BITS(v) (v).bits\n\
 #define ADDGUARDS(a,b) (a)\n\
 #define GUARDARGS /* nothing */\n\
