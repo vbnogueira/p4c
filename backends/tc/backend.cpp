@@ -642,8 +642,8 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
  bld->appendLine("// These do not belong in the *_parser.h file!");
  bld->appendLine("// XXX Figure out a better place for them.");
  bld->appendLine("");
- // There's a comment before the gen_sh*() functions which refers to
- //  this next comment.
+ // There's a comment before the code-generation includes which refers
+ //  to this next comment.
  bld->append("\
 /*\n\
  * These #defines exist so code generation functions can be shared\n\
