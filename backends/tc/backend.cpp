@@ -710,7 +710,10 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
      }
   }
  bld->newline();
- bld->append("\
+ // Generate this comment only when the code it's talking about exists!
+ for (i=0;i<nwr;i++)
+  { if (wrv[i].type != WR_VALUE)
+     { bld->append("\
 /*\n\
  * These are here because EBPF quasi-C does not support aggregate\n\
  *  return - but this is a code-generation thing, not a language thing,\n\
@@ -718,6 +721,9 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
  *  generate them here than into the .c file, plus this way they're\n\
  *  available to everything that includes this file.\n\
  */\n");
+       break;
+     }
+  }
  for (i=0;i<nwr;i++)
   { switch (wrv[i].type)
      { case WR_VALUE:
