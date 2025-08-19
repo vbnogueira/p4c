@@ -169,8 +169,13 @@ void SCAN_WIDTHS::expr_common(const IR::Expression *e)
  t = typemap->getType(e,true);
  if (t->is<IR::Type_Type>()) t = t->to<const IR::Type_Type>()->type;
  if (t->is<IR::Type_Bits>())
-  { // std::cout << "SCAN_WIDTHS preorder(" << e->toString() << "), type " << t << ", width " << t->width_bits() << std::endl;
+  { std::cout << "SCAN_WIDTHS expr_common Type_Bits(" << e->toString() << "), type " << t << ", width " << t->width_bits() << std::endl;
     add_width(t->width_bits());
+  }
+ else if (t->is<IR::Type_Varbits>())
+  { std::cout << "SCAN_WIDTHS expr_common Type_Varbits(" << e->toString() << "), type " << t
+	<< ", width " << t->min_width_bits() << "..." << t->max_width_bits() << std::endl;
+    add_width(t->max_width_bits());
   }
 }
 
@@ -416,6 +421,54 @@ bool SCAN_WIDTHS::preorder(const IR::AssignmentStatement *s)
  return(true);
 }
 
+bool SCAN_WIDTHS::preorder(const IR::MethodCallExpression *mx)
+{
+ std::cout << "SCAN_WIDTHS::preorder IR::MethodCallExpression: " << mx->toString() << std::endl;
+ std::cout << "    method = " << mx->method->toString() << std::endl;
+ auto mi = P4::MethodInstance::resolve(mx,refmap,typemap);
+ std::cout << "    mi expr = " << mi->expr->toString() << std::endl;
+ auto em = mi->to<P4::ExternMethod>();
+ if (em) std::cout << "    em->method = " << em->method->toString() << std::endl; else std::cout << "    em = nil" << std::endl;
+ P4::P4CoreLibrary &p4lib = P4::P4CoreLibrary::instance();
+ if (em && (em->method->name.name == p4lib.packetIn.extract.name))
+  { int nargs = em->expr->arguments->size();
+    std::cout << "    Extract call, arg count " << nargs << std::endl;
+    const IR::Expression *arg1 = em->expr->arguments->at(0)->expression;
+    auto xt = typemap->getType(arg1);
+    auto slt = xt->to<IR::Type_StructLike>();
+    std::cout << "    Target type is " << xt->toString() << std::endl;
+    bool isv = false;
+    if (! slt)
+     { std::cout << "    Target is not struct-like" << std::endl;
+     }
+    else if (slt->variable())
+     { std::cout << "    Target is variable struct-like, width " << xt->min_width_bits() << ".." << xt->max_width_bits() << std::endl;
+       isv = true;
+     }
+    else
+     { std::cout << "    Target is fixed struct-like, width " << xt->width_bits() << std::endl;
+     }
+    switch (nargs)
+     { case 1:
+	  if (isv) std::cout << "*** variable one-arg extract" << std::endl;
+	  break;
+       case 2:
+	  if (isv)
+	   { auto arg2 = em->expr->arguments->at(1)->expression;
+	     std::cout << "    Size expression is " << arg2->toString() << std::endl;
+	     add_width(xt->max_width_bits());
+	   }
+	  else
+	   { std::cout << "*** fixed two-arg extract" << std::endl;
+	   }
+	  break;
+       default:
+	  break;
+     }
+  }
+ return(true);
+}
+
 // There's _got_ to be a C++ standard object that can do this better.
 //  std::set maybe?  "_First_ make it work, _then_ make it better."
 void SCAN_WIDTHS::insert_wr(WIDTH_REC &wr)
@@ -639,7 +692,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 {
  int i;
 
- bld->appendLine("// These do not belong in the *_parser.h file!");
+ bld->appendLine("// BEGIN stuff that does not belong in the *_parser.h file");
  bld->appendLine("// XXX Figure out a better place for them.");
  bld->appendLine("");
  // There's a comment before the code-generation includes which refers
@@ -669,7 +722,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
   { switch (wrv[i].type)
      { case WR_VALUE:
 	  bld->newline();
-    	  bld->appendFormat("struct internal_bit_%d {\n"/*}*/,wrv[i].value);
+	  bld->appendFormat("struct internal_bit_%d {\n"/*}*/,wrv[i].value);
 	  bld->appendFormat("  u8 bits[%d];\n",(wrv[i].value+7)>>3);
 	  bld->append(/*{*/"};\n");
 	  bld->newline();
@@ -796,6 +849,7 @@ void SCAN_WIDTHS::gen_h(EBPF::CodeBuilder *bld) const
 	  break;
      }
   }
+ bld->appendLine("// END stuff that does not belong in the *_parser.h file");
 }
 
 void SCAN_WIDTHS::gen_c(EBPF::CodeBuilder *bld) const
@@ -812,7 +866,7 @@ bool Backend::process() {
     auto refMapEBPF = refMap;
     auto typeMapEBPF = typeMap;
     auto hook = options.getDebugHook();
-    SCAN_WIDTHS *sw = new SCAN_WIDTHS(typeMap);
+    SCAN_WIDTHS *sw = new SCAN_WIDTHS(typeMap,refMap);
 // std::cout << "Created SCAN_WIDTHS " << (void *)sw << std::endl;
     parseTCAnno = new ParseTCAnnotations();
     tcIR = new ConvertToBackendIR(toplevel, pipeline, refMap, typeMap, options);
@@ -911,7 +965,7 @@ void Backend::serialize() const {
     EBPF::CodeBuilder c(target), p(target), h(target);
     ebpf_program->emit(&c);
     ebpf_program->emitParser(&p);
-    ebpf_program->emitHeader(&h);
+    dynamic_cast<const PNAArchTC *>(ebpf_program)->emitHeader_part1(&h);
     if (widths) {
 //	widths->dump();
 	widths->gen_h(&h);
@@ -919,6 +973,7 @@ void Backend::serialize() const {
     } else {
 	std::cout << "No widths\n";
     }
+    dynamic_cast<const PNAArchTC *>(ebpf_program)->emitHeader_part2(&h);
     if (::P4::errorCount() > 0) {
         return;
     }

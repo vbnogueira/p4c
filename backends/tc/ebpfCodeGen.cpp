@@ -299,9 +299,17 @@ void PNAArchTC::emitParser(EBPF::CodeBuilder *builder) const {
 }
 
 void PNAArchTC::emitHeader(EBPF::CodeBuilder *builder) const {
+    (void)builder;
+    assert(!"should never be here");
+}
+
+void PNAArchTC::emitHeader_part1(EBPF::CodeBuilder *builder) const {
     xdp->emitGeneratedComment(builder);
     builder->target->emitIncludes(builder);
     emitPNAIncludes(builder);
+}
+
+void PNAArchTC::emitHeader_part2(EBPF::CodeBuilder *builder) const {
     emitPreamble(builder);
     for (auto type : ebpfTypes) {
         type->emit(builder);
@@ -628,6 +636,18 @@ void TCIngressPipelinePNA::emitLocalVariables(EBPF::CodeBuilder *builder) {
     builder->emitIndent();
     builder->appendFormat("unsigned char %s;", byteVar.c_str());
     builder->newline();
+    /*
+     * XXX This needs attention!
+     *
+     * (a) The variable should be generated only when needed.
+     *
+     * (b) The use of byteVar, lengthVar, etc, rather than literals,
+     *	leads me to suspect just using a fixed string is somehow wrong.
+     *	"First make it work...."
+     */
+    builder->emitIndent();
+    builder->appendFormat("unsigned int adv;");
+    builder->newline();
 
     builder->emitIndent();
     builder->appendFormat("u32 %s = ", lengthVar.c_str());
@@ -699,11 +719,12 @@ void EBPFPnaParser::emitDeclaration(EBPF::CodeBuilder *builder, const IR::Declar
  * We do generate code to advance ebpf_packetOffsetInBits (the offset
  *  at runtime) by the correct (runtime) amount.
  */
-unsigned int PnaStateTranslationVisitor::compileExtractVarbits(const IR::Expression *expr,
-                                                               const IR::StructField *field,
-                                                               unsigned int bitoff,
-							       EBPF::EBPFType *type,
-                                                               const char *sizecode) {
+unsigned int PnaStateTranslationVisitor::compileExtractVarbits(
+	const IR::Expression *expr,
+	const IR::StructField *field,
+	unsigned int bitoff,
+	EBPF::EBPFType *type,
+	const char *sizecode ) {
     static const char *const wvar = "ebpf_varbits_width";
     static const char *const ovar = "ebpf_varbits_offset";
     int maxwidth;
@@ -754,7 +775,7 @@ unsigned int PnaStateTranslationVisitor::compileExtractVarbits(const IR::Express
      * We can't loop in BPF code; I don't know about EBPF, but it's
      *  relatively simple to work around here.  We generate a string of
      *  assignments, wrapped in a switch to enter the string at the
-     *  correct place at runtime (vaguely reminiscent of Duff's device).
+     *  correct place at runtime (reminiscent of Duff's device).
      */
     builder->emitIndent();
     builder->appendFormat("%s = BYTES(%s) + %s;\n", ovar, program->offsetVar.c_str(), wvar);
@@ -782,6 +803,9 @@ unsigned int PnaStateTranslationVisitor::compileExtractVarbits(const IR::Express
     builder->emitIndent();
     builder->appendFormat("%s += %s << 3;", program->offsetVar.c_str(), wvar);
     builder->newline();
+    builder->emitIndent();
+    builder->appendFormat("%s += %s << 3;", program->headerStartVar.c_str(), wvar);
+    builder->newline();
     builder->blockEnd(true);
     // See function header comment for why 0.
     return (0);
@@ -803,12 +827,15 @@ unsigned int PnaStateTranslationVisitor::compileExtractField(const IR::Expressio
     cstring fieldName = field->name.name;
 
     if (type->is<EBPF::EBPFScalarType>() && type->as<EBPF::EBPFScalarType>().isvariable) {
+auto sct = type->as<EBPF::EBPFScalarType>();
         if (!sizecode) assert(!"Impossible extract of varbits field with no size code");
     } else {
-        if (sizecode) assert(!"Impossible extract of fixed-width field with size code");
+auto sct = type->as<EBPF::EBPFScalarType>();
+if (sizecode) std::cerr << "field " << field->name << ", size code " << sizecode << std::endl;
+//        if (sizecode) assert(!"Impossible extract of fixed-width field with size code");
     }
     builder->appendFormat("/* TC::PnaStateTranslationVisitor::compileExtractField: field %s",
-                          fieldName);
+                          fieldName.c_str());
     if (type->is<EBPF::EBPFScalarType>()) {
         builder->appendFormat(" (%s scalar)",
                               type->as<EBPF::EBPFScalarType>().isvariable ? "variable" : "fixed");
@@ -2535,31 +2562,49 @@ bool ControlBodyTranslatorPNA::preorder(const IR::AssignmentStatement *a)
         }
     }
  auto ltype = typeMap->getType(a->left);
- if (ltype)
-  { builder->append("/*CBTP::preorder Assignment B1*/");
-    auto et = EBPF::EBPFTypeFactory::instance->create(ltype);
-    if (et->is<EBPF::EBPFScalarType>())
-     { auto bits = et->to<EBPF::EBPFScalarType>()->implementationWidthInBits();
-       builder->appendFormat("/*bits=%u*/\n",(unsigned int)bits);
-       if (! EBPF::TCisPrimitiveByteAligned(bits))
-	{ if (bits <= 32)
-	   { builder->appendFormat("storePrimitive32(&");
-	   }
-	  else if (bits <= 64)
-	   { builder->appendFormat("storePrimitive64(&");
+ auto rtype = typeMap->getType(a->right);
+ if (ltype && rtype)
+  { auto etl = EBPF::EBPFTypeFactory::instance->create(ltype);
+    auto etr = EBPF::EBPFTypeFactory::instance->create(rtype);
+    if (etl->is<EBPF::EBPFScalarType>() && etr->is<EBPF::EBPFScalarType>())
+     { auto lbits = etl->to<EBPF::EBPFScalarType>()->implementationWidthInBits();
+       auto rbits = etr->to<EBPF::EBPFScalarType>()->implementationWidthInBits();
+       builder->appendFormat("/*%u<-%u*/\n",(unsigned int)lbits,(unsigned int)rbits);
+       if (EBPF::TCisPrimitiveByteAligned(lbits))
+	{ visit(a->left);
+	  builder->append(" = ");
+	}
+       else
+	{ if (lbits <= 64)
+	   { builder->appendFormat("storePrimitive%d(&",(lbits<=32)?32:64);
+	     visit(a->left);
+	     builder->appendFormat("[0],%u,",(unsigned int)lbits);
 	   }
 	  else
-	   { builder->appendFormat("assign_%u(&",bits);
+	   { builder->appendFormat("assign_%u(&",(unsigned int)lbits);
+	     visit(a->left);
+	     builder->append("[0],");
 	   }
-	  visit(a->left);
-	  builder->append("[0],");
-	  visit(a->right);
-	  builder->append(");");
-	  return(false);
 	}
+       if (EBPF::TCisPrimitiveByteAligned(rbits))
+	{ visit(a->right);
+	}
+       else
+	{ if (rbits <= 64)
+	   { builder->appendFormat("getPrimitive%d(&",(lbits<=32)?32:64);
+	     visit(a->right);
+	     builder->appendFormat("[0],%u)",(unsigned int)rbits);
+	   }
+	  else
+	   { // wide RHS?  No code for this yet.
+	     builder->appendFormat("XXX NO CODE TO HANDLE THIS CASE YET XXX");
+	   }
+	}
+       if (! EBPF::TCisPrimitiveByteAligned(lbits)) builder->append(")");
+       builder->append(";\n");
+       return(false);
      }
   }
- builder->append("/*CBTP::preorder Assignment B2*/");
  return(EBPF::CodeGenInspector::preorder(a));
 }
 // =====================ActionTranslationVisitorPNA=============================

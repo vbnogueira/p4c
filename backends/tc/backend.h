@@ -270,6 +270,7 @@ class SCAN_WIDTHS : public Inspector {
     int nwr;
     WIDTH_REC *wrv;
     P4::TypeMap *typemap;
+    P4::ReferenceMap *refmap;
     void insert_wr(WIDTH_REC &);
     void add_width(int);
     void add_concat(int, int);
@@ -283,7 +284,7 @@ class SCAN_WIDTHS : public Inspector {
     void add_cmp(unsigned int, unsigned char);
     void add_assign(unsigned int);
   public:
-    explicit SCAN_WIDTHS(P4::TypeMap *tm) : nwr(0), wrv(0), typemap(tm) { }
+    explicit SCAN_WIDTHS(P4::TypeMap *tm, P4::ReferenceMap *rm) : nwr(0), wrv(0), typemap(tm), refmap(rm) { }
     ~SCAN_WIDTHS(void) { std::free(wrv); }
     void expr_common(const IR::Expression *);
     virtual bool preorder(const IR::Expression *) override;
@@ -308,6 +309,7 @@ class SCAN_WIDTHS : public Inspector {
     virtual bool preorder(const IR::AddSat *) override;
     virtual bool preorder(const IR::SubSat *) override;
     virtual bool preorder(const IR::AssignmentStatement *) override;
+    virtual bool preorder(const IR::MethodCallExpression *) override;
     bool arith_common_2(const IR::Operation_Binary *, WRTYPE, bool = true);
     bool arith_common_1(const IR::Operation_Unary *, WRTYPE, bool = true);
     bool sarith_common_2(const IR::Operation_Binary *, WRTYPE, bool = true);

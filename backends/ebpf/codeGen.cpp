@@ -586,7 +586,6 @@ void CodeGenInspector::emitTCBinaryOperation(const IR::Operation_Binary *b) {
        emit_tc_large(b,width);
        return;
     }
-    builder->append("/*TCBO*/");
     auto action = findContext<IR::P4Action>();
     auto tcTarget = dynamic_cast<const P4TCTarget *>(builder->target);
     cstring lByteOrder = "HOST"_cs, rByteOrder = "HOST"_cs;

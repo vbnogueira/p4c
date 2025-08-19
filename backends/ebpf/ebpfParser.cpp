@@ -272,21 +272,22 @@ bool StateTranslationVisitor::preorder(const IR::SelectCase *selectCase) {
     return false;
 }
 
-unsigned int StateTranslationVisitor::compileExtractField(const IR::Expression *expr,
-							  const IR::StructField *field,
-							  unsigned hdrOffsetBits,
-							  EBPFType *type,
-							  const char *sizecode) {
+unsigned int StateTranslationVisitor::compileExtractField(
+	const IR::Expression *expr,
+	const IR::StructField *field,
+	unsigned hdrOffsetBits,
+	EBPFType *type,
+	const char *sizecode ) {
     unsigned alignment = hdrOffsetBits % 8;
     unsigned widthToExtract = type->as<IHasWidth>().widthInBits();
     auto program = state->parser->program;
     cstring msgStr;
     cstring fieldName = field->name.name;
 
+ auto mt = type->type; // state->parser->typeMap->getType(type->type);
  builder->appendFormat("/* EBPF::StateTranslationVisitor::compileExtractField: field %s",fieldName);
- if (type->is<EBPF::EBPFScalarType>())
-  { builder->appendFormat(" (%s scalar)",type->as<EBPF::EBPFScalarType>().isvariable ? "variable" : "fixed");
-  }
+ builder->appendFormat(" %s",mt->variable() ? "variable" : "fixed");
+ if (mt->is<EBPF::EBPFScalarType>()) builder->append(" scalar");
  if (sizecode) builder->appendFormat("\n%s",sizecode);
  builder->appendFormat("*/");
 
@@ -310,7 +311,7 @@ unsigned int StateTranslationVisitor::compileExtractField(const IR::Expression *
             helper = "load_word";
             loadSize = 32;
         } else {
-            // TODO: this is wrong, since a 60-bit unaligned read may require 9 words.
+            // TODO: this is wrong, since a 64-bit unaligned read may require 9 words.
             if (wordsToRead > 64) BUG("Unexpected width %d", widthToExtract);
             helper = "load_dword";
             loadSize = 64;
@@ -511,8 +512,34 @@ char *StateTranslationVisitor::visit_to_string(const IR::Expression *expr) {
     return (strdup(s.c_str()));
 }
 
-void StateTranslationVisitor::compileExtract(const IR::Expression *dest,
-                                             const IR::Expression *varsize) {
+/*
+ * Advancing the packet offset pointer is complicated by the presence
+ *  of variable-sized fields.
+ *
+ * Doing it right would mean changing a lot of code, because code
+ *  generation is shot through with the assumption that we know the
+ *  offset of each field at p4c time.  But the major use case for
+ *  varbit extract is IPv4 options, so we can get away with requiring
+ *  that (a) we have at most one varbit and (b) it is last.  Under
+ *  those assumptions, we can still know the starting offset of each
+ *  field at p4c time.
+ *
+ * It's tempting to just not advancee the packet offset at all after a
+ *  variable-sized extract.  That works for a single extract, but
+ *  breaks if the parser code does another extract after a
+ *  variable-sized extract.  So, instead, we generate an advance just
+ *  before extracting a variable-sized field, and have the varbit
+ *  extract code generate another advance internally (arguably we
+ *  should do it here, but in the generated code the variable that
+ *  holds the field size has gone out of scope by the time we regain
+ *  control).  We then supppress the usual trailing advance after a
+ *  varbit extract.
+ */
+void StateTranslationVisitor::compileExtract(const IR::Expression *dest, const IR::Expression *varsize)
+{
+std::cout << "compileExtract: dest = " << dest->toString() << ", varsize = ";
+if (varsize) std::cout << varsize->toString(); else std::cout << "nil";
+std::cout << std::endl;
     builder->appendFormat("//compileExtract\n");
     builder->appendFormat("// compileExtract: dest = %s\n", dest->toString());
     builder->appendFormat("// compileExtract: varsize = %s\n",
@@ -527,21 +554,38 @@ void StateTranslationVisitor::compileExtract(const IR::Expression *dest,
         return;
     }
 
-    // We expect all headers to start on a byte boundary.
-    unsigned width = ht->width_bits();
-    if ((width % 8) != 0) {
-        ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
-                    "Header %1% size %2% is not a multiple of 8 bits.", dest, width);
-        return;
-    }
-
-    auto program = state->parser->program;
-
-    auto offsetStr = absl::StrFormat("(%v - (u8*)%v) + BYTES(%d)", program->headerStartVar,
-                                     program->packetStartVar, width);
-
-    builder->target->emitTraceMessage(builder, "Parser: check pkt_len=%d >= last_read_byte=%d", 2,
-                                      program->lengthVar.c_str(), offsetStr.c_str());
+ auto program = state->parser->program;
+ unsigned int minw;
+ unsigned int maxw;
+ /*
+  * We expect all headers to start on a byte boundary.  This means they
+  *  must all be an integral number of bytes.
+  */
+ if (ht->variable())
+  { minw = ht->min_width_bits();
+    maxw = ht->max_width_bits();
+    if (minw & 7)
+     { ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
+		"Header %1% min size %2% is not a multiple of 8 bits.",dest,minw);
+       return;
+     }
+    if (maxw & 7)
+     { ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
+		"Header %1% max size %2% is not a multiple of 8 bits.",dest,maxw);
+       return;
+     }
+    builder->appendFormat("// compileExtract: variable %u..%u\n",minw,maxw);
+  }
+ else
+  { minw = ht->width_bits();
+    if (minw & 7)
+     { ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
+		"Header %1% size %2% is not a multiple of 8 bits.",dest,minw);
+       return;
+     }
+    builder->appendFormat("// compileExtract: fixed %u\n",minw);
+    maxw = minw;
+  }
 
     // to load some fields the compiler will use larger words
     // than actual width of a field (e.g. 48-bit field loaded using load_dword())
@@ -567,7 +611,7 @@ void StateTranslationVisitor::compileExtract(const IR::Expression *dest,
 
     builder->emitIndent();
     builder->appendFormat("if ((u8*)%s < %s + BYTES(%d + %u)) ", program->packetEndVar.c_str(),
-                          program->headerStartVar.c_str(), width, curr_padding);
+                          program->headerStartVar.c_str(), minw, curr_padding);
     builder->blockStart();
 
     builder->target->emitTraceMessage(builder, "Parser: invalid packet (packet too short)");
@@ -592,28 +636,44 @@ void StateTranslationVisitor::compileExtract(const IR::Expression *dest,
      *  elsewhere which (a) requires at least one varbit field in the
      *  header struct and (b) forbids multiple varbit fields in a header,
      *  so we will have exactly one varbit field.  I'm leaving the tests
-     *  in both for the cases which aren't can't-happens and for the sake
-     *  of firewalling in case code elsewhere changes such that the
-     *  can't-happens actually can happen.
+     *  in for three reasons: (1) for the cases which aren't
+     *	can't-happens, (2) for the sake of firewalling in case code
+     *	elsewhere changes such that the can't-happens actually can
+     *	happen, and (3) in case I made a mistake thinking code
+     *	elsewhere always excludes some condition.
      */
     bool had_varbit;
     had_varbit = false;
-    for (auto f : ht->fields) {
+ for (auto f : ht->fields)
+  { /*
+     * This really should not be an error.  But too much code assumes
+     *	we know the offset within the packet of the start of each field
+     *	at compile time.
+     *
+     * XXX Fixing this is for future work.
+     */
+    if (had_varbit)
+     { ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
+		"varbit<> members must not be followed by another member");
+       return;
+     }
         auto ftype = state->parser->typeMap->getType(f);
         char *sizecode = 0;
-        if (ftype->is<IR::Type_Varbits>()) {
+        if (ftype->variable()) {
             if (varsize == nullptr) {
                 ::P4::error(
                     ErrorType::ERR_INVALID,
-                    "Extract to a header with a varbit<> member requires two-argument extract()");
+                    "Extract to a header with a variable member requires two-argument extract()");
                 return;
+#if 0 // this test can't trip because of the had_varbit test above
             } else if (had_varbit) {
                 ::P4::error(ErrorType::ERR_INVALID,
                         "Two-argument extract() target must not have multiple varbit<> members");
                 return;
+#endif
             } else {
                 sizecode = visit_to_string(varsize);
-                builder->appendFormat("/* compileExtract varbit size = %s */", sizecode);
+                builder->appendFormat("/* compileExtract variable size = %s */", sizecode);
                 builder->newline();
                 had_varbit = true;
             }
@@ -622,12 +682,18 @@ void StateTranslationVisitor::compileExtract(const IR::Expression *dest,
         auto et = etype->to<IHasWidth>();
         if (et == nullptr) {
             ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
-                        "Headers must use defined-widths types: %1%", f);
+                        "Headers must use defined-width types: %1%", f);
             return;
         }
+    if (sizecode)
+     { builder->emitIndent();
+       builder->appendFormat("%s += BYTES(%u);\n",program->headerStartVar.c_str(),hdrOffsetBits);
+     }
+std::cerr << "calling compileExtractField on " << f->getName() << " (" << f->toString() << "), sizecode " << ((sizecode == nullptr) ? "nil" : sizecode) << std::endl;
 	unsigned int advance = compileExtractField(dest, f, hdrOffsetBits, etype, sizecode);
+std::cerr << "called compileExtractField, return value is " << advance << std::endl;
         hdrOffsetBits += advance ? advance : et->widthInBits();
-    }
+  }
     builder->newline();
 
     if (ht->is<IR::Type_Header>()) {
@@ -636,10 +702,11 @@ void StateTranslationVisitor::compileExtract(const IR::Expression *dest,
         builder->appendLine(".ebpf_valid = 1;");
     }
 
-    // Increment header pointer
-    builder->emitIndent();
-    builder->appendFormat("%s += BYTES(%u);", program->headerStartVar.c_str(), width);
+ if (! had_varbit)
+  { builder->emitIndent();
+    builder->appendFormat("%s += BYTES(%u);",program->headerStartVar.c_str(),minw);
     builder->newline();
+  }
 
     msgStr = absl::StrFormat("Parser: extracted %v", dest);
     builder->target->emitTraceMessage(builder, msgStr.c_str());

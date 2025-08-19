@@ -104,6 +104,8 @@ class PNAArchTC : public PNAEbpfGenerator {
     void emit(EBPF::CodeBuilder *builder) const override;
     void emitParser(EBPF::CodeBuilder *builder) const override;
     void emitHeader(EBPF::CodeBuilder *builder) const override;
+    virtual void emitHeader_part1(EBPF::CodeBuilder *builder) const;
+    virtual void emitHeader_part2(EBPF::CodeBuilder *builder) const;
     void emitInstances(EBPF::CodeBuilder *builder) const override;
     void emitGlobalFunctions(EBPF::CodeBuilder *builder) const;
 };
