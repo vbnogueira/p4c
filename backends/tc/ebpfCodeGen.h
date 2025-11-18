@@ -460,11 +460,23 @@ class DeparserHdrEmitTranslatorPNA : public EBPF::DeparserPrepareBufferTranslato
     const EBPF::EBPFDeparser *deparser;
 
  public:
+    bool in_var = false;
     explicit DeparserHdrEmitTranslatorPNA(const EBPF::EBPFDeparser *deparser);
 
     void processMethod(const P4::ExternMethod *method) override;
     void emitField(EBPF::CodeBuilder *builder, cstring field, const IR::Expression *hdrExpr,
                    unsigned alignment, EBPF::EBPFType *type, bool isMAC);
+};
+
+class SIZE_SCANNER : public EBPF::DeparserPrepareBufferTranslator {
+ protected:
+    const EBPF::EBPFDeparser *deparser;
+
+ public:
+    explicit SIZE_SCANNER(const EBPF::EBPFDeparser *deparser);
+
+    void processMethod(const P4::ExternMethod *method) override;
+    bool preorder(const IR::MethodCallStatement *) override;
 };
 
 class EBPFHashAlgorithmTypeFactoryPNA : public EBPF::EBPFHashAlgorithmTypeFactoryPSA {

@@ -84,17 +84,17 @@ void DeparserPrepareBufferTranslator::processMethod(const P4::ExternMethod *meth
                             "Cannot emit a non-header type %1%", expr);
                 return;
             }
-
-            unsigned width = headerToEmit->width_bits();
+#if 0 // XXX Should move this to some tc-specific place
             builder->emitIndent();
             builder->append("if (");
             this->visit(expr);
             builder->append(".ebpf_valid) ");
             builder->blockStart();
             builder->emitIndent();
-            builder->appendFormat("%s += %d;", this->deparser->outerHdrLengthVar.c_str(), width);
+	    builder->appendFormat("%s += %u;", this->deparser->outerHdrLengthVar.c_str(),headerToEmit->width_bits());
             builder->newline();
             builder->blockEnd(true);
+#endif
         }
     }
 }

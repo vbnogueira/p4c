@@ -444,10 +444,10 @@ abstract Type_StructLike : Type_Declaration, INestedNamespace, ISimpleNamespace,
         }
         return -1;
     }
-    // Yeah, this is inefficient.  "First make it work..."
     virtual bool variable() override {
 	return(const_cast<const typeof(*this) *>(this)->variable());
     }
+    // Yeah, this is inefficient.  "First make it work..."
     virtual bool variable() const override {
 	for (auto f : fields) {
 	    if (f->type->variable()) return(true);

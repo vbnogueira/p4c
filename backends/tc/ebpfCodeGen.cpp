@@ -737,6 +737,8 @@ unsigned int PnaStateTranslationVisitor::compileExtractVarbits(
     // XXX Is this an error condition?
     // if (maxwidth & 7) ...
     // I'm going to assume not and let the runtime test handle it.
+    // Note that DeparserHdrEmitTranslatorPNA::processMethod
+    // assumes the actual width is always a multiple of 8.
     maxwidth >>= 3;
     // Do we need to handle the case where bitoff isn't a multiple of 8?
     // It would greatly complicate much other code.
@@ -771,6 +773,21 @@ unsigned int PnaStateTranslationVisitor::compileExtractVarbits(
     builder->emitIndent();
     builder->appendFormat("%s >>= 3;", wvar);
     builder->newline();
+    builder->append("// This isn't strictly necessary; the CHECK() below would catch it.\n");
+    builder->append("// But this is the correct check; the CHECK() calls are to work around\n");
+    builder->append("// EBPF toolchain idiocy and should be removed once the `verifier' is\n");
+    builder->append("// fixed.\n");
+    builder->emitIndent();
+    builder->appendFormat("if ((u8*)ebpf_packetEnd < hdr_start + %s) ",wvar);
+    builder->blockStart();
+    builder->append("tooshort:;\n");
+    builder->emitIndent();
+    builder->appendFormat("ebpf_errorCode = PacketTooShort;");
+    builder->newline();
+    builder->emitIndent();
+    builder->appendFormat("goto reject;");
+    builder->newline();
+    builder->blockEnd(true);
     /*
      * We can't loop in BPF code; I don't know about EBPF, but it's
      *  relatively simple to work around here.  We generate a string of
@@ -780,6 +797,8 @@ unsigned int PnaStateTranslationVisitor::compileExtractVarbits(
     builder->emitIndent();
     builder->appendFormat("%s = BYTES(%s) + %s;\n", ovar, program->offsetVar.c_str(), wvar);
     builder->newline();
+    builder->append("// Work around EBPF `verifier' brokenness.\n");
+    builder->appendFormat("#define CHECK(n) do { if ((%s < 1) || (%s > (n))) goto tooshort; } while (0)\n",ovar,ovar);
     builder->emitIndent();
     builder->appendFormat("switch (%s)", wvar);
     builder->newline();
@@ -787,8 +806,7 @@ unsigned int PnaStateTranslationVisitor::compileExtractVarbits(
     builder->blockStart();
     for (w = maxwidth - 1; w >= 0; w--) {
         builder->emitIndent();
-        builder->appendFormat("case %d: ", w + 1);
-        builder->emitIndent();
+        builder->appendFormat("case %d: CHECK(%d); ",w+1,w+1);
         visit(expr);
         builder->appendFormat(".%s.data[%d] = (", fieldName.c_str(), w);
         bytetype->emit(builder);
@@ -1539,6 +1557,14 @@ void IngressDeparserPNA::emit(EBPF::CodeBuilder *builder) {
     builder->appendFormat("int %s = 0", this->outerHdrLengthVar.c_str());
     builder->endOfStatement(true);
 
+    auto incrementer = new SIZE_SCANNER(this);
+    incrementer->setBuilder(builder);
+    incrementer->copyPointerVariables(codeGen);
+    incrementer->substitute(this->headers,this->parserHeaders);
+    controlBlock->container->body->apply(*incrementer);
+
+    builder->append("// add increments here\n");
+
     auto prepareBufferTranslator = new EBPF::DeparserPrepareBufferTranslator(this);
     prepareBufferTranslator->setBuilder(builder);
     prepareBufferTranslator->copyPointerVariables(codeGen);
@@ -1612,6 +1638,50 @@ void IngressDeparserPNA::emit(EBPF::CodeBuilder *builder) {
     controlBlock->container->body->apply(*hdrEmitTranslator);
 
     builder->newline();
+}
+
+SIZE_SCANNER::SIZE_SCANNER(const EBPF::EBPFDeparser *deparser)
+    : EBPF::CodeGenInspector(deparser->program->refMap, deparser->program->typeMap),
+      EBPF::DeparserPrepareBufferTranslator(deparser),
+      deparser(deparser) {
+    setName("SIZE_SCANNER");
+}
+
+bool SIZE_SCANNER::preorder(const IR::MethodCallStatement *s)
+{
+ visit(s->methodCall);
+ return(false);
+}
+
+void SIZE_SCANNER::processMethod(const P4::ExternMethod *m)
+{
+ if (m->method->name.name == p4lib.packetOut.emit.name)
+  { if (m->object == deparser->packet_out)
+     { auto exp = m->expr->arguments->at(0)->expression;
+       auto etype = deparser->program->typeMap->getType(exp);
+       auto toemit = etype->to<IR::Type_Header>();
+       if (toemit == nullptr)
+	{ // Let DeparserHdrEmitTranslatorPNA::processMethod
+	  //  generate the error for this case.
+	  return;
+	}
+       builder->emitIndent();
+       builder->append("if (");
+       this->visit(exp);
+       builder->appendFormat(".ebpf_valid) %s += ",deparser->outerHdrLengthVar.c_str());
+       if (toemit->variable())
+	{ visit(exp);
+	  builder->append(".o.curwidth");
+	}
+       else
+	{ builder->appendFormat("%u",(unsigned int)toemit->width_bits());
+	}
+       builder->append(";\n");
+     }
+    else
+     { BUG("emit() should be invoked for only packet_out");
+     }
+  }
 }
 
 void IngressDeparserPNA::emitDeclaration(EBPF::CodeBuilder *builder, const IR::Declaration *decl) {
@@ -2737,31 +2807,39 @@ void DeparserHdrEmitTranslatorPNA::processMethod(const P4::ExternMethod *method)
                 ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
                             "Cannot emit a non-header type %1%", expr);
             }
-
             cstring msgStr;
+// XXX We can't just
+// builder->append("// emitting header %s\n",exprType->to<IR::Type_Header>()->externalName());
+// because that produces no output and no compile-time errors/warnings.
+// I don't know what's wrong, but this is possibly the worst failure mode available.
+builder->append("// emitting header ");
+builder->append(exprType->to<IR::Type_Header>()->externalName());
+builder->newline();
             builder->emitIndent();
             builder->append("if (");
             this->visit(expr);
             builder->append(".ebpf_valid) ");
             builder->blockStart();
+	    in_var = headerToEmit->variable();
             auto program = deparser->program;
-            unsigned width = headerToEmit->width_bits();
-            msgStr = absl::StrFormat("Deparser: emitting header %s", expr->toString().c_str());
-            builder->target->emitTraceMessage(builder, msgStr.c_str());
-
-            builder->emitIndent();
-            builder->appendFormat("if (%s < %s + BYTES(%s + %d)) ", program->packetEndVar.c_str(),
+	    if (! in_var)
+	     { unsigned int width = headerToEmit->width_bits();
+	       msgStr = absl::StrFormat("Deparser: emitting header %s", expr->toString().c_str());
+	       builder->target->emitTraceMessage(builder, msgStr.c_str());
+	       builder->emitIndent();
+	       builder->appendFormat("if (%s < %s + BYTES(%s + %d)) ", program->packetEndVar.c_str(),
                                   program->packetStartVar.c_str(), program->offsetVar.c_str(),
                                   width);
-            builder->blockStart();
-            builder->target->emitTraceMessage(builder,
+	       builder->blockStart();
+	       builder->target->emitTraceMessage(builder,
                                               "Deparser: invalid packet (packet too short)");
-            builder->emitIndent();
-            // We immediately return instead of jumping to reject state.
-            // It avoids reaching BPF_COMPLEXITY_LIMIT_JMP_SEQ.
-            builder->appendFormat("return %s;", builder->target->abortReturnCode().c_str());
-            builder->newline();
-            builder->blockEnd(true);
+	       builder->emitIndent();
+	       // We immediately return instead of jumping to reject state.
+	       // It avoids reaching BPF_COMPLEXITY_LIMIT_JMP_SEQ.
+	       builder->appendFormat("return %s;", builder->target->abortReturnCode().c_str());
+	       builder->newline();
+	       builder->blockEnd(true);
+	     }
             builder->emitIndent();
             builder->newline();
             unsigned alignment = 0;
@@ -2781,9 +2859,9 @@ void DeparserHdrEmitTranslatorPNA::processMethod(const P4::ExternMethod *method)
                                              value == "ipv6" || value == "be16" ||
                                              value == "be32" || value == "be64";
                 }
-                emitField(builder, f->name, expr, alignment, etype, noEndiannessConversion);
-                alignment += et->widthInBits();
-                alignment %= 8;
+		emitField(builder, f->name, expr, alignment, etype, noEndiannessConversion);
+		alignment += et->widthInBits();
+		alignment %= 8;
             }
             builder->blockEnd(true);
         } else {
@@ -2792,11 +2870,50 @@ void DeparserHdrEmitTranslatorPNA::processMethod(const P4::ExternMethod *method)
     }
 }
 
+#if 0
+		if (in_var)
+		 { if (! et->is<IR::Type_StructLike>())
+		    { if (et->is<IR::Type_Varbits>())
+		       { if (alignment)
+			  { ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,"Varbit field must be on an octet boundary");
+			    return;
+			  }
+			 // Must also be an integer number of octets in size,
+			 // but that's a runtime condition, and
+			 // PnaStateTranslationVisitor::compileExtractVarbits
+			 // generates code to ensure it's true.
+			 builder->emitIndent();
+			 builder->appendFormat("if (%s < %s + BYTES(%s + ",
+				program->packetEndVar.c_str(),
+				program->packetStartVar.c_str(),
+				program->offsetVar.c_str());
+			 builder->append("[[XXX]]");
+			 builder->append(")) ");
+		       }
+		      else
+		       { builder->emitIndent();
+			 builder->appendFormat("if (%s < %s + BYTES(%s + %d)) ",
+				program->packetEndVar.c_str(),
+				program->packetStartVar.c_str(),
+				program->offsetVar.c_str(),
+				et->widthInBits());
+		       }
+		      builder->blockStart();
+		      builder->emitIndent();
+		      builder->appendFormat("return %s;\n",builder->target->abortReturnCode().c_str());
+		      builder->blockEnd(true);
+		    }
+		 }
+#endif
+
 void DeparserHdrEmitTranslatorPNA::emitField(EBPF::CodeBuilder *builder, cstring field,
                                              const IR::Expression *hdrExpr, unsigned int alignment,
                                              EBPF::EBPFType *type, bool noEndiannessConversion) {
     auto program = deparser->program;
 
+builder->append("// emitField ");
+builder->append(field);
+builder->newline();
     auto et = type->to<EBPF::IHasWidth>();
     if (et == nullptr) {
         ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
@@ -2868,15 +2985,29 @@ void DeparserHdrEmitTranslatorPNA::emitField(EBPF::CodeBuilder *builder, cstring
             builder->endOfStatement(true);
         }
     }
+    if (type->type->variable())
+     { builder->emitIndent();
+       builder->append("// Parser ensures curwidth is a multiple of 8\n");
+       builder->emitIndent();
+       builder->append("switch (");
+       visit(hdrExpr);
+       builder->appendFormat(".%v.curwidth >> 3) ",field);
+       builder->blockStart();
+     }
+
     unsigned bitsInFirstByte = widthToEmit % 8;
     if (bitsInFirstByte == 0) bitsInFirstByte = 8;
     unsigned bitsInCurrentByte = bitsInFirstByte;
     unsigned left = widthToEmit;
-    for (unsigned i = 0; i < (widthToEmit + 7) / 8; i++) {
+    for (int i = (widthToEmit - 1) / 8; i>=0; i--) {
+//    for (unsigned i = 0; i < (widthToEmit + 7) / 8; i++)
         builder->emitIndent();
+	if (type->type->variable()) builder->appendFormat("case %d: ",i+1);
         builder->appendFormat("%s = ((char*)(&", program->byteVar.c_str());
         visit(hdrExpr);
-        builder->appendFormat(".%v))[%d]", field, i);
+        builder->appendFormat(".%v", field);
+	if (type->type->variable()) builder->append(".data");
+        builder->appendFormat("))[%d]", i);
         builder->endOfStatement(true);
         unsigned freeBits = alignment != 0 ? (8 - alignment) : 8;
         bitsInCurrentByte = left >= 8 ? 8 : left;
@@ -2920,8 +3051,16 @@ void DeparserHdrEmitTranslatorPNA::emitField(EBPF::CodeBuilder *builder, cstring
         }
         alignment = (alignment + bitsToWrite) % 8;
     }
+    if (type->type->variable()) builder->blockEnd(true);
     builder->emitIndent();
-    builder->appendFormat("%s += %d", program->offsetVar.c_str(), widthToEmit);
+    builder->appendFormat("%s += ", program->offsetVar.c_str());
+    if (type->type->variable())
+     { visit(hdrExpr);
+       builder->appendFormat(".%v.curwidth >> 3",field);
+     }
+    else
+     { builder->appendFormat("%d", widthToEmit);
+     }
     builder->endOfStatement(true);
     builder->newline();
 }
