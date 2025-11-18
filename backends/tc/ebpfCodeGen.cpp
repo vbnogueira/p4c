@@ -3056,7 +3056,7 @@ builder->newline();
     builder->appendFormat("%s += ", program->offsetVar.c_str());
     if (type->type->variable())
      { visit(hdrExpr);
-       builder->appendFormat(".%v.curwidth >> 3",field);
+       builder->appendFormat(".%v.curwidth",field);
      }
     else
      { builder->appendFormat("%d", widthToEmit);
