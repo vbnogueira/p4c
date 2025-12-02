@@ -584,6 +584,15 @@ std::cout << std::endl;
        return;
      }
     builder->appendFormat("// compileExtract: fixed %u\n",minw);
+    builder->emitIndent();
+    builder->appendFormat("if ((u8 *)%s < %s + BYTES(%u)) ",
+	program->packetEndVar.c_str(), program->headerStartVar.c_str(), minw);
+    builder->blockStart();
+    builder->emitIndent();
+    builder->appendFormat("%s = PacketTooShort;\n",program->errorVar.c_str());
+    builder->emitIndent();
+    builder->append("goto reject;\n");
+    builder->blockEnd(true);
     maxw = minw;
   }
 
@@ -609,6 +618,8 @@ std::cout << std::endl;
         }
     }
 
+#if 0
+// Instead of this, we test before each field.  *Damn* that EBPF `verifier'!
     builder->emitIndent();
     builder->appendFormat("if ((u8*)%s < %s + BYTES(%d + %u)) ", program->packetEndVar.c_str(),
                           program->headerStartVar.c_str(), minw, curr_padding);
@@ -624,6 +635,7 @@ std::cout << std::endl;
     builder->appendFormat("goto %s;", IR::ParserState::reject.c_str());
     builder->newline();
     builder->blockEnd(true);
+#endif
 
     msgStr = absl::StrFormat("Parser: extracting header %v", dest);
     builder->target->emitTraceMessage(builder, msgStr.c_str());

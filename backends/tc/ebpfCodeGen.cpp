@@ -729,7 +729,7 @@ unsigned int PnaStateTranslationVisitor::compileExtractVarbits(
     static const char *const ovar = "ebpf_varbits_offset";
     int maxwidth;
     int w;
-    auto bytetype = EBPF::EBPFTypeFactory::instance->create(IR::Type_Bits::get(8));
+//    auto bytetype = EBPF::EBPFTypeFactory::instance->create(IR::Type_Bits::get(8));
     cstring fieldName = field->name.name;
     auto program = state->parser->program;
 
@@ -778,7 +778,7 @@ unsigned int PnaStateTranslationVisitor::compileExtractVarbits(
     builder->append("// EBPF toolchain idiocy and should be removed once the `verifier' is\n");
     builder->append("// fixed.\n");
     builder->emitIndent();
-    builder->appendFormat("if ((u8*)ebpf_packetEnd < hdr_start + %s) ",wvar);
+    builder->appendFormat("if ((u8*)%s < hdr_start + %s) ",program->packetEndVar.c_str(),wvar);
     builder->blockStart();
     builder->append("tooshort:;\n");
     builder->emitIndent();
@@ -794,11 +794,16 @@ unsigned int PnaStateTranslationVisitor::compileExtractVarbits(
      *  assignments, wrapped in a switch to enter the string at the
      *  correct place at runtime (reminiscent of Duff's device).
      */
-    builder->emitIndent();
-    builder->appendFormat("%s = BYTES(%s) + %s;\n", ovar, program->offsetVar.c_str(), wvar);
-    builder->newline();
     builder->append("// Work around EBPF `verifier' brokenness.\n");
-    builder->appendFormat("#define CHECK(n) do { if ((%s < 1) || (%s > (n))) goto tooshort; } while (0)\n",ovar,ovar);
+    builder->appendFormat(	"#define ASSIGN(n) do { if ((u8 *)%s < %s + (n) + 1)\\\n"/*}*/
+				"				goto tooshort;\\\n"
+				"			else\\\n"
+				"				",
+	program->packetEndVar.c_str(), program->headerStartVar.c_str());
+    visit(expr);
+    builder->appendFormat(".%s.data[(n)] = (u8)load_byte(%s,BYTES(%s)+(n));\\\n"
+				"			} while (0)\n",
+	fieldName.c_str(), program->packetStartVar.c_str(), program->offsetVar.c_str());
     builder->emitIndent();
     builder->appendFormat("switch (%s)", wvar);
     builder->newline();
@@ -806,14 +811,11 @@ unsigned int PnaStateTranslationVisitor::compileExtractVarbits(
     builder->blockStart();
     for (w = maxwidth - 1; w >= 0; w--) {
         builder->emitIndent();
-        builder->appendFormat("case %d: CHECK(%d); ",w+1,w+1);
-        visit(expr);
-        builder->appendFormat(".%s.data[%d] = (", fieldName.c_str(), w);
-        bytetype->emit(builder);
-        builder->appendFormat(")load_byte(%s,--%s);", program->packetStartVar.c_str(), ovar);
+        builder->appendFormat("case %d: ASSIGN(%d);",w+1,w);
         builder->newline();
     }
     builder->blockEnd(true);
+    builder->appendFormat("#undef ASSIGN\n");
     builder->emitIndent();
     visit(expr);
     builder->appendFormat(".%s.curwidth = %s;", fieldName.c_str(), wvar);
@@ -866,6 +868,15 @@ if (sizecode) std::cerr << "field " << field->name << ", size code " << sizecode
         return (compileExtractVarbits(expr, field, hdrOffsetBits, type, sizecode));
     }
 
+    builder->emitIndent();
+    builder->appendFormat("if ((u8 *)%s < %s + BYTES(%s) + BYTES(%u)) ",
+	program->packetEndVar.c_str(), program->packetStartVar.c_str(), program->offsetVar.c_str(), widthToExtract);
+    builder->blockStart();
+    builder->emitIndent();
+    builder->appendFormat("%s = PacketTooShort;\n");
+    builder->emitIndent();
+    builder->appendFormat("goto %s;\n",IR::ParserState::reject.c_str());
+    builder->blockEnd(true);
     bool noEndiannessConversion = false;
     if (const auto *anno = field->getAnnotation(ParseTCAnnotations::tcType)) {
         cstring value = anno->getExpr(0)->checkedTo<IR::StringLiteral>()->value;
@@ -909,6 +920,14 @@ if (sizecode) std::cerr << "field " << field->name << ", size code " << sizecode
         }
 
         unsigned shift = loadSize - alignment - widthToExtract;
+#if 0
+	builder->emitIndent();
+	builder->appendFormat("if ((u8 *)%s < %s + BYTES(%s) + BYTES(%d)) {\n"/*}*/,
+		program->packetEndVar.c_str(),
+		program->packetStartVar.c_str(),
+		program->offsetVar.c_str(),
+		widthToExtract);
+#endif
         builder->emitIndent();
         if (noEndiannessConversion) {
             builder->appendFormat("__builtin_memcpy/*A*/(&");
@@ -2988,6 +3007,16 @@ builder->newline();
     if (type->type->variable())
      { builder->emitIndent();
        builder->append("// Parser ensures curwidth is a multiple of 8\n");
+       builder->append("#define WRITE(n) do { \\\n"/*}*/);
+       builder->append("		if ((u8*)ebpf_packetEnd < (u8 *)pkt + BYTES(ebpf_packetOffsetInBits) + (n) + 1) \\\n");
+       builder->append("			return TC_ACT_SHOT; \\\n");
+       builder->append("		else { \\\n"/*}*/);
+       builder->append("			ebpf_byte = ((char*)(&");
+       visit(hdrExpr);
+       builder->appendFormat(".%v.data))[(n)]; \\\n",field);
+       builder->append("			write_byte(pkt, BYTES(ebpf_packetOffsetInBits) + (n), (ebpf_byte)); \\\n");
+       builder->append(/*{*/"		} \\\n");
+       builder->append(/*{*/"	} while (0)\n");
        builder->emitIndent();
        builder->append("switch (");
        visit(hdrExpr);
@@ -3002,56 +3031,61 @@ builder->newline();
     for (int i = (widthToEmit - 1) / 8; i>=0; i--) {
 //    for (unsigned i = 0; i < (widthToEmit + 7) / 8; i++)
         builder->emitIndent();
-	if (type->type->variable()) builder->appendFormat("case %d: ",i+1);
-        builder->appendFormat("%s = ((char*)(&", program->byteVar.c_str());
-        visit(hdrExpr);
-        builder->appendFormat(".%v", field);
-	if (type->type->variable()) builder->append(".data");
-        builder->appendFormat("))[%d]", i);
-        builder->endOfStatement(true);
-        unsigned freeBits = alignment != 0 ? (8 - alignment) : 8;
-        bitsInCurrentByte = left >= 8 ? 8 : left;
-        unsigned bitsToWrite = bitsInCurrentByte > freeBits ? freeBits : bitsInCurrentByte;
-        BUG_CHECK((bitsToWrite > 0) && (bitsToWrite <= 8), "invalid bitsToWrite %d", bitsToWrite);
-        builder->emitIndent();
-        if (alignment == 0 && bitsToWrite == 8) {  // write whole byte
-            builder->appendFormat("write_byte(%s, BYTES(%s) + %d, (%s))",
-                                  program->packetStartVar.c_str(), program->offsetVar.c_str(),
-                                  i,  // do not reverse byte order
-                                  program->byteVar.c_str());
-        } else {  // write partial
-            shift = (8 - alignment - bitsToWrite);
-            builder->appendFormat("write_partial(%s + BYTES(%s) + %d, %d, %d, (%s >> %d))",
-                                  program->packetStartVar.c_str(), program->offsetVar.c_str(),
-                                  i,  // do not reverse byte order
-                                  bitsToWrite, shift, program->byteVar.c_str(),
-                                  widthToEmit > freeBits ? alignment == 0 ? shift : alignment : 0);
-        }
-        builder->endOfStatement(true);
-        left -= bitsToWrite;
-        bitsInCurrentByte -= bitsToWrite;
-        alignment = (alignment + bitsToWrite) % 8;
-        bitsToWrite = (8 - bitsToWrite);
-        if (bitsInCurrentByte > 0) {
-            builder->emitIndent();
-            if (bitsToWrite == 8) {
-                builder->appendFormat("write_byte(%s, BYTES(%s) + %d + 1, (%s << %d))",
-                                      program->packetStartVar.c_str(), program->offsetVar.c_str(),
-                                      i,  // do not reverse byte order
-                                      program->byteVar.c_str(), 8 - alignment % 8);
-            } else {
-                builder->appendFormat("write_partial(%s + BYTES(%s) + %d + 1, %d, %d, (%s))",
-                                      program->packetStartVar.c_str(), program->offsetVar.c_str(),
-                                      i,  // do not reverse byte order
-                                      bitsToWrite, 8 + alignment - bitsToWrite,
-                                      program->byteVar.c_str());
-            }
-            builder->endOfStatement(true);
-            left -= bitsToWrite;
-        }
-        alignment = (alignment + bitsToWrite) % 8;
+	if (type->type->variable())
+	 { builder->appendFormat("case %d: WRITE(%d);\n",i+1,i);
+	 }
+	else
+	 { builder->appendFormat("%s = ((char*)(&", program->byteVar.c_str());
+	   visit(hdrExpr);
+	   builder->appendFormat(".%v))[%d]",field,i);
+	   builder->endOfStatement(true);
+	   unsigned freeBits = alignment != 0 ? (8 - alignment) : 8;
+	   bitsInCurrentByte = left >= 8 ? 8 : left;
+	   unsigned bitsToWrite = bitsInCurrentByte > freeBits ? freeBits : bitsInCurrentByte;
+	   BUG_CHECK((bitsToWrite > 0) && (bitsToWrite <= 8), "invalid bitsToWrite %d", bitsToWrite);
+	   builder->emitIndent();
+	   if (alignment == 0 && bitsToWrite == 8) {  // write whole byte
+	       builder->appendFormat("write_byte(%s, BYTES(%s) + %d, (%s))",
+				     program->packetStartVar.c_str(), program->offsetVar.c_str(),
+				     i,  // do not reverse byte order
+				     program->byteVar.c_str());
+	   } else {  // write partial
+	       shift = (8 - alignment - bitsToWrite);
+	       builder->appendFormat("write_partial(%s + BYTES(%s) + %d, %d, %d, (%s >> %d))",
+				     program->packetStartVar.c_str(), program->offsetVar.c_str(),
+				     i,  // do not reverse byte order
+				     bitsToWrite, shift, program->byteVar.c_str(),
+				     widthToEmit > freeBits ? alignment == 0 ? shift : alignment : 0);
+	   }
+	   builder->endOfStatement(true);
+	   left -= bitsToWrite;
+	   bitsInCurrentByte -= bitsToWrite;
+	   alignment = (alignment + bitsToWrite) % 8;
+	   bitsToWrite = (8 - bitsToWrite);
+	   if (bitsInCurrentByte > 0) {
+	       builder->emitIndent();
+	       if (bitsToWrite == 8) {
+		   builder->appendFormat("write_byte(%s, BYTES(%s) + %d + 1, (%s << %d))",
+					 program->packetStartVar.c_str(), program->offsetVar.c_str(),
+					 i,  // do not reverse byte order
+					 program->byteVar.c_str(), 8 - alignment % 8);
+	       } else {
+		   builder->appendFormat("write_partial(%s + BYTES(%s) + %d + 1, %d, %d, (%s))",
+					 program->packetStartVar.c_str(), program->offsetVar.c_str(),
+					 i,  // do not reverse byte order
+					 bitsToWrite, 8 + alignment - bitsToWrite,
+					 program->byteVar.c_str());
+	       }
+	       builder->endOfStatement(true);
+	       left -= bitsToWrite;
+	   }
+	   alignment = (alignment + bitsToWrite) % 8;
+	 }
     }
-    if (type->type->variable()) builder->blockEnd(true);
+    if (type->type->variable())
+     { builder->blockEnd(true);
+       builder->append("#undef WRITE\n");
+     }
     builder->emitIndent();
     builder->appendFormat("%s += ", program->offsetVar.c_str());
     if (type->type->variable())
