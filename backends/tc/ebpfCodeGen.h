@@ -131,6 +131,7 @@ class PnaStateTranslationVisitor : public EBPF::PsaStateTranslationVisitor {
         : EBPF::PsaStateTranslationVisitor(refMap, typeMap, prsr) {}
 
     bool preorder(const IR::Member *expression) override;
+    mutable bool extractedVarbit = false;
 
  protected:
     unsigned int compileExtractVarbits(const IR::Expression *, const IR::StructField *,
@@ -139,6 +140,7 @@ class PnaStateTranslationVisitor : public EBPF::PsaStateTranslationVisitor {
 				     unsigned int, EBPF::EBPFType *, const char *);
     void compileLookahead(const IR::Expression *destination) override;
     bool preorder(const IR::SelectCase *selectCase) override;
+    void compileExtract(const IR::Expression *dest, const IR::Expression *varsize = 0);
 };
 
 class EBPFPnaParser : public EBPF::EBPFPsaParser {
@@ -461,6 +463,7 @@ class DeparserHdrEmitTranslatorPNA : public EBPF::DeparserPrepareBufferTranslato
 
  public:
     bool in_var = false;
+    mutable bool hasVarbit = false;
     explicit DeparserHdrEmitTranslatorPNA(const EBPF::EBPFDeparser *deparser);
 
     void processMethod(const P4::ExternMethod *method) override;

@@ -114,7 +114,7 @@ class EBPFScalarType : public EBPFType, public IHasWidth {
     explicit EBPFScalarType(const IR::Type_Bits *bits)
         : EBPFType(bits), width(bits->size), isSigned(bits->isSigned), isvariable(false) {}
     explicit EBPFScalarType(const IR::Type_Varbits *bits)
-        : EBPFType(bits), width(bits->size), isSigned(false), isvariable(false) {}
+        : EBPFType(bits), width(bits->size), isSigned(false), isvariable(true) {}
     unsigned bytesRequired() const { return ROUNDUP(width, 8); }
     unsigned alignment() const;
     void emit(CodeBuilder *builder) override;
@@ -237,6 +237,7 @@ class EBPFScalarTypePNA : public EBPFScalarType {
         isPrimitiveByteAligned = (width <= 8 || width <= 16 || (width > 24 && width <= 32) ||
                                   (width > 56 && width <= 64));
     }
+
     unsigned alignment() const;
     void declare(CodeBuilder *builder, cstring id, bool asPointer);
     void declareInit(CodeBuilder *builder, cstring id, bool asPointer);

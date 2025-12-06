@@ -584,15 +584,6 @@ std::cout << std::endl;
        return;
      }
     builder->appendFormat("// compileExtract: fixed %u\n",minw);
-    builder->emitIndent();
-    builder->appendFormat("if ((u8 *)%s < %s + BYTES(%u)) ",
-	program->packetEndVar.c_str(), program->headerStartVar.c_str(), minw);
-    builder->blockStart();
-    builder->emitIndent();
-    builder->appendFormat("%s = PacketTooShort;\n",program->errorVar.c_str());
-    builder->emitIndent();
-    builder->append("goto reject;\n");
-    builder->blockEnd(true);
     maxw = minw;
   }
 

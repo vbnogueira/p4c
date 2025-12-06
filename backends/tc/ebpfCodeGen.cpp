@@ -43,7 +43,12 @@ void PNAEbpfGenerator::emitPreamble(EBPF::CodeBuilder *builder) const {
 void PNAEbpfGenerator::emitCommonPreamble(EBPF::CodeBuilder *builder) const {
     builder->newline();
     builder->appendLine("#define EBPF_MASK(t, w) ((((t)(1)) << (w)) - (t)1)");
+#if 1
     builder->appendLine("#define BYTES(w) ((w) / 8)");
+#else
+    builder->appendLine("#define BYTES(w) (((w) + (8) - 1) / (8))");
+#endif
+    builder->appendLine("#define BYTES_ROUND_UP(w) (((w) + (8) - 1) / (8))");
     builder->appendLine(
         "#define write_partial(a, w, s, v) do { *((u8*)a) = ((*((u8*)a)) "
         "& ~(EBPF_MASK(u8, w) << s)) | (v << s) ; } while (0)");
@@ -824,7 +829,11 @@ unsigned int PnaStateTranslationVisitor::compileExtractVarbits(
     builder->appendFormat("%s += %s << 3;", program->offsetVar.c_str(), wvar);
     builder->newline();
     builder->emitIndent();
+#if 0
     builder->appendFormat("%s += %s << 3;", program->headerStartVar.c_str(), wvar);
+#else
+    builder->appendFormat("%s += %s;", program->headerStartVar.c_str(), wvar);
+#endif
     builder->newline();
     builder->blockEnd(true);
     // See function header comment for why 0.
@@ -846,12 +855,21 @@ unsigned int PnaStateTranslationVisitor::compileExtractField(const IR::Expressio
     cstring msgStr;
     cstring fieldName = field->name.name;
 
+    if (sizecode) {
+        std::cout << " fieldName " << fieldName << " in " << __func__ << std::endl;
+	std::cout << " type " << type << std::endl;
+        if (type->is<EBPF::EBPFScalarType>()) {
+	    std::cout << "Is scalar code" << std::endl;
+	    std::cout << "isvariable "<< type->as<EBPF::EBPFScalarType>().isvariable << std::endl;
+	}
+    }
     if (type->is<EBPF::EBPFScalarType>() && type->as<EBPF::EBPFScalarType>().isvariable) {
+	this->extractedVarbit = true;
+        std::cout << "varbit fieldName " << fieldName << " in " << __func__ << std::endl;
 auto sct = type->as<EBPF::EBPFScalarType>();
         if (!sizecode) assert(!"Impossible extract of varbits field with no size code");
     } else {
 auto sct = type->as<EBPF::EBPFScalarType>();
-if (sizecode) std::cerr << "field " << field->name << ", size code " << sizecode << std::endl;
 //        if (sizecode) assert(!"Impossible extract of fixed-width field with size code");
     }
     builder->appendFormat("/* TC::PnaStateTranslationVisitor::compileExtractField: field %s",
@@ -868,15 +886,22 @@ if (sizecode) std::cerr << "field " << field->name << ", size code " << sizecode
         return (compileExtractVarbits(expr, field, hdrOffsetBits, type, sizecode));
     }
 
-    builder->emitIndent();
-    builder->appendFormat("if ((u8 *)%s < %s + BYTES(%s) + BYTES(%u)) ",
-	program->packetEndVar.c_str(), program->packetStartVar.c_str(), program->offsetVar.c_str(), widthToExtract);
-    builder->blockStart();
-    builder->emitIndent();
-    builder->appendFormat("%s = PacketTooShort;\n");
-    builder->emitIndent();
-    builder->appendFormat("goto %s;\n",IR::ParserState::reject.c_str());
-    builder->blockEnd(true);
+    if (!this->extractedVarbit) {
+        builder->emitIndent();
+	if (widthToExtract & 7)
+		builder->appendFormat("if ((u8 *)%s < %s + BYTES_ROUND_UP(%s) + BYTES_ROUND_UP(%u)) ",
+				      program->packetEndVar.c_str(), program->packetStartVar.c_str(), program->offsetVar.c_str(), widthToExtract);
+	else
+		builder->appendFormat("if ((u8 *)%s < %s + BYTES(%s) + BYTES(%u)) ",
+				      program->packetEndVar.c_str(), program->packetStartVar.c_str(), program->offsetVar.c_str(), widthToExtract);
+        builder->blockStart();
+        builder->emitIndent();
+        builder->appendFormat("%s = PacketTooShort;\n");
+        builder->emitIndent();
+        builder->appendFormat("goto %s;\n",IR::ParserState::reject.c_str());
+        builder->blockEnd(true);
+    }
+
     bool noEndiannessConversion = false;
     if (const auto *anno = field->getAnnotation(ParseTCAnnotations::tcType)) {
         cstring value = anno->getExpr(0)->checkedTo<IR::StringLiteral>()->value;
@@ -1094,6 +1119,220 @@ void PnaStateTranslationVisitor::compileLookahead(const IR::Expression *destinat
                           state->parser->program->offsetVar.c_str());
     builder->endOfStatement(true);
     builder->blockEnd(true);
+}
+
+/*
+ * Advancing the packet offset pointer is complicated by the presence
+ *  of variable-sized fields.
+ *
+ * Doing it right would mean changing a lot of code, because code
+ *  generation is shot through with the assumption that we know the
+ *  offset of each field at p4c time.  But the major use case for
+ *  varbit extract is IPv4 options, so we can get away with requiring
+ *  that (a) we have at most one varbit and (b) it is last.  Under
+ *  those assumptions, we can still know the starting offset of each
+ *  field at p4c time.
+ *
+ * It's tempting to just not advancee the packet offset at all after a
+ *  variable-sized extract.  That works for a single extract, but
+ *  breaks if the parser code does another extract after a
+ *  variable-sized extract.  So, instead, we generate an advance just
+ *  before extracting a variable-sized field, and have the varbit
+ *  extract code generate another advance internally (arguably we
+ *  should do it here, but in the generated code the variable that
+ *  holds the field size has gone out of scope by the time we regain
+ *  control).  We then supppress the usual trailing advance after a
+ *  varbit extract.
+ */
+void PnaStateTranslationVisitor::compileExtract(const IR::Expression *dest, const IR::Expression *varsize)
+{
+    builder->appendFormat("//compileExtract\n");
+    builder->appendFormat("// compileExtract: dest = %s\n", dest->toString());
+    builder->appendFormat("// compileExtract: varsize = %s\n",
+                          varsize ? varsize->toString() : cstring("nil"));
+
+    cstring msgStr;
+    auto type = state->parser->typeMap->getType(dest);
+    auto ht = type->to<IR::Type_StructLike>();
+    if (ht == nullptr) {
+        ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET, "Cannot extract to a non-struct type %1%",
+                    dest);
+        return;
+    }
+
+ auto program = state->parser->program;
+ unsigned int minw;
+ unsigned int maxw;
+ /*
+  * We expect all headers to start on a byte boundary.  This means they
+  *  must all be an integral number of bytes.
+  */
+ if (ht->variable())
+  { minw = ht->min_width_bits();
+    maxw = ht->max_width_bits();
+    if (minw & 7)
+     { ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
+		"Header %1% min size %2% is not a multiple of 8 bits.",dest,minw);
+       return;
+     }
+    if (maxw & 7)
+     { ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
+		"Header %1% max size %2% is not a multiple of 8 bits.",dest,maxw);
+       return;
+     }
+    builder->appendFormat("// compileExtract: variable %u..%u\n",minw,maxw);
+  }
+ else
+  { minw = ht->width_bits();
+    if (minw & 7)
+     { ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
+		"Header %1% size %2% is not a multiple of 8 bits.",dest,minw);
+       return;
+     }
+    builder->appendFormat("// compileExtract: fixed %u\n",minw);
+    if (this->extractedVarbit) {
+        builder->emitIndent();
+	if (minw & 7)
+            builder->appendFormat("if ((u8 *)%s < %s + BYTES_ROUND_UP(%u)) ",
+                program->packetEndVar.c_str(), program->headerStartVar.c_str(), minw);
+	else
+            builder->appendFormat("if ((u8 *)%s < %s + BYTES(%u)) ",
+                program->packetEndVar.c_str(), program->headerStartVar.c_str(), minw);
+        builder->blockStart();
+        builder->emitIndent();
+        builder->appendFormat("%s = PacketTooShort;\n",program->errorVar.c_str());
+        builder->emitIndent();
+        builder->append("goto reject;\n");
+        builder->blockEnd(true);
+    }
+    maxw = minw;
+  }
+
+    // to load some fields the compiler will use larger words
+    // than actual width of a field (e.g. 48-bit field loaded using load_dword())
+    // we must ensure that the larger word is not outside of packet buffer.
+    // FIXME: this can fail if a packet does not contain additional payload after header.
+    //  However, we don't have better solution in case of using load_X functions to parse packet.
+    // TODO: consider using a collection of smaller widths.
+    unsigned curr_padding = 0;
+    for (auto f : ht->fields) {
+        auto ftype = state->parser->typeMap->getType(f);
+        auto etype = EBPF::EBPFTypeFactory::instance->create(ftype);
+        if (etype->is<EBPF::EBPFScalarType>()) {
+            auto scalarType = etype->to<EBPF::EBPFScalarType>();
+            unsigned readWordSize = scalarType->alignment() * 8;
+            unsigned unaligned = scalarType->widthInBits() % readWordSize;
+            unsigned padding = readWordSize - unaligned;
+            if (padding == readWordSize) padding = 0;
+            if (scalarType->widthInBits() + padding >= curr_padding) {
+                curr_padding = padding;
+            }
+        }
+    }
+
+    if (this->extractedVarbit) {
+        builder->emitIndent();
+        builder->appendFormat("if ((u8*)%s < %s + BYTES_ROUND_UP(%d + %u)) ", program->packetEndVar.c_str(),
+                              program->headerStartVar.c_str(), minw, curr_padding);
+        builder->blockStart();
+
+        builder->target->emitTraceMessage(builder, "Parser: invalid packet (packet too short)");
+
+        builder->emitIndent();
+        builder->appendFormat("%s = %s;", program->errorVar.c_str(), p4lib.packetTooShort.str());
+        builder->newline();
+
+        builder->emitIndent();
+        builder->appendFormat("goto %s;", IR::ParserState::reject.c_str());
+        builder->newline();
+        builder->blockEnd(true);
+    }
+
+    msgStr = absl::StrFormat("Parser: extracting header %v", dest);
+    builder->target->emitTraceMessage(builder, msgStr.c_str());
+    builder->newline();
+
+    unsigned hdrOffsetBits = 0;
+    /*
+     * Some of the tests in this loop appear to be can't-happens.  For
+     *  example, when varsize is not nil, there appears to be code
+     *  elsewhere which (a) requires at least one varbit field in the
+     *  header struct and (b) forbids multiple varbit fields in a header,
+     *  so we will have exactly one varbit field.  I'm leaving the tests
+     *  in for three reasons: (1) for the cases which aren't
+     *	can't-happens, (2) for the sake of firewalling in case code
+     *	elsewhere changes such that the can't-happens actually can
+     *	happen, and (3) in case I made a mistake thinking code
+     *	elsewhere always excludes some condition.
+     */
+    bool had_varbit;
+    had_varbit = false;
+ for (auto f : ht->fields)
+  { /*
+     * This really should not be an error.  But too much code assumes
+     *	we know the offset within the packet of the start of each field
+     *	at compile time.
+     *
+     * XXX Fixing this is for future work.
+     */
+    if (had_varbit)
+     { ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
+		"varbit<> members must not be followed by another member");
+       return;
+     }
+        auto ftype = state->parser->typeMap->getType(f);
+        char *sizecode = 0;
+        if (ftype->variable()) {
+            if (varsize == nullptr) {
+                ::P4::error(
+                    ErrorType::ERR_INVALID,
+                    "Extract to a header with a variable member requires two-argument extract()");
+                return;
+#if 0 // this test can't trip because of the had_varbit test above
+            } else if (had_varbit) {
+                ::P4::error(ErrorType::ERR_INVALID,
+                        "Two-argument extract() target must not have multiple varbit<> members");
+                return;
+#endif
+            } else {
+                sizecode = visit_to_string(varsize);
+                builder->appendFormat("/* compileExtract variable size = %s */", sizecode);
+                builder->newline();
+                had_varbit = true;
+            }
+        }
+        auto etype = EBPF::EBPFTypeFactory::instance->create(ftype);
+        auto et = etype->to<EBPF::IHasWidth>();
+        if (et == nullptr) {
+            ::P4::error(ErrorType::ERR_UNSUPPORTED_ON_TARGET,
+                        "Headers must use defined-width types: %1%", f);
+            return;
+        }
+    if (sizecode)
+     { builder->emitIndent();
+       builder->appendFormat("%s += BYTES(%u);\n",program->headerStartVar.c_str(),hdrOffsetBits);
+     }
+	unsigned int advance = compileExtractField(dest, f, hdrOffsetBits, etype, sizecode);
+        hdrOffsetBits += advance ? advance : et->widthInBits();
+  }
+    builder->newline();
+
+    if (ht->is<IR::Type_Header>()) {
+        builder->emitIndent();
+        visit(dest);
+        builder->appendLine(".ebpf_valid = 1;");
+    }
+
+ if (! had_varbit)
+  { builder->emitIndent();
+    builder->appendFormat("%s += BYTES(%u);",program->headerStartVar.c_str(),minw);
+    builder->newline();
+  }
+
+    msgStr = absl::StrFormat("Parser: extracted %v", dest);
+    builder->target->emitTraceMessage(builder, msgStr.c_str());
+
+    builder->newline();
 }
 
 bool PnaStateTranslationVisitor::preorder(const IR::SelectCase *selectCase) {
@@ -2840,8 +3079,12 @@ builder->newline();
             builder->append(".ebpf_valid) ");
             builder->blockStart();
 	    in_var = headerToEmit->variable();
+	    if (!hasVarbit) {
+	        hasVarbit = in_var;
+		std::cout << "In var " << hasVarbit << std::endl;
+	    }
             auto program = deparser->program;
-	    if (! in_var)
+	    if (!in_var && !hasVarbit)
 	     { unsigned int width = headerToEmit->width_bits();
 	       msgStr = absl::StrFormat("Deparser: emitting header %s", expr->toString().c_str());
 	       builder->target->emitTraceMessage(builder, msgStr.c_str());
@@ -2979,6 +3222,25 @@ builder->newline();
     unsigned shift =
         widthToEmit < 8 ? (emitSize - alignment - widthToEmit) : (emitSize - widthToEmit);
 
+     if (hasVarbit && !type->as<EBPF::EBPFScalarType>().isvariable) {
+         builder->emitIndent();
+         if (widthToEmit & 7)
+                 builder->appendFormat("if (%s < %s + BYTES_ROUND_UP(%s) + BYTES_ROUND_UP(%d)) ",
+                                       program->packetEndVar.c_str(),
+                                       program->packetStartVar.c_str(),
+                                       program->offsetVar.c_str(),
+                                       widthToEmit);
+         else
+                 builder->appendFormat("if (%s < %s + BYTES(%s) + BYTES(%d)) ",
+                                       program->packetEndVar.c_str(),
+                                       program->packetStartVar.c_str(),
+                                       program->offsetVar.c_str(),
+                                       widthToEmit);
+
+         builder->appendFormat("return TC_ACT_SHOT;");
+         builder->newline();
+     }
+
     if (!swap.isNullOrEmpty() && !noEndiannessConversion) {
         if (!isPrimitive) {
             builder->emitIndent();
@@ -3093,7 +3355,7 @@ builder->newline();
        builder->appendFormat(".%v.curwidth",field);
      }
     else
-     { builder->appendFormat("%d", widthToEmit);
+     { builder->appendFormat("%d << 3", widthToEmit);
      }
     builder->endOfStatement(true);
     builder->newline();
